@@ -1,8 +1,8 @@
 # TODO — DataBackup
 
-État courant : **I1 à I5 (code) livrés** le 2026-10-18 (socle, `scan`, `archive`, `transfer`,
-enchaînement + récapitulatif ; 74 tests verts, `ruff` propre) ; **I0** (CDC v1 figé, récap
-`cdc.md` §12) fait. Reste le **premier run réel complet**, puis **I6**.
+État courant : **I1 à I5 livrés et vérifiés en réel** le 2026-10-18 — run complet à froid :
+**14:25** pour 22 archives (4,63 Go), 0 échec, `timeout` Piloter de 1 h confirmé ; 77 tests
+verts, `ruff` propre. Prochaine étape : **I6 — `README.md`**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -85,7 +85,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   **4 archives, 151 Mo** envoyées en 35 s, `backup/` vidé, code `0` ; **aller-retour vérifié**
   (téléchargement de `documents.zip` puis déchiffrement : 8 fichiers lus).
 
-## I5 — Enchaînement complet, nettoyage et récapitulatif 🚧 **CODE FAIT** (2026-10-18)
+## I5 — Enchaînement complet, nettoyage et récapitulatif ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : une exécution complète fiable, du scan au nettoyage.
 - **Livrable** : commande `all` par défaut (scan → archive → transfer → cleanup), nettoyage
@@ -107,8 +107,10 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   (le fichier est conservé), **comptage incrémental** des archives (récapitulatif juste même en
   cas d'échec partiel), et erreur d'un fichier seul → **ignoré sans interrompre**. **3 tests**
   de régression (**77** au total). Règle consignée au CDC §6 ; correctif revalidé sur `Prusa`.
-- **⬜ Reste** : le **premier run réel complet** (à la main, sans timeout) — mesurer la durée,
-  surtout `Photos.zip` (~3,2 Go), puis ajuster le `timeout` du bouton Piloter (§8).
+- **✅ Run réel complet** (2026-10-18, lancé à la main) : **14:25** pour **22 archives**
+  (4,63 Go créés, 22 envoyés, **0 échec**), `backup/` vidé, code retour `0` ; `photos.zip`
+  (3,19 Go) archivé en 11 s et **envoyé en 9:01**, `prusa.zip` en 1:41. Le `timeout` Piloter
+  de **1 h est confirmé** (large marge). Côté Proton : **22 archives uniques**, aucune orpheline.
 
 ## I6 — Documentation utilisateur (`README.md`)
 

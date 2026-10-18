@@ -128,15 +128,18 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
   n'a que `filesystem size <path>`, la taille d'un dossier). Un dépassement se traduit par un
   **échec d'upload** : message clair, compté en échec, code retour `1`. Vérification manuelle
   recommandée dans l'interface web Proton avant la première grosse sauvegarde (≈ 4,8 Go).
+  *(relevé le 2026-10-18 : `filesystem size` **compte aussi les éléments en corbeille** — après
+  un run qui écrase des archives (`-f replace`), il **surestime** du volume remplacé ; ne pas
+  le confondre avec l'espace réellement occupé.)*
 
 **Échecs et validation** *(décidé le 2026-10-18 — détail au §6)*
 
 - **Coupure réseau** en cours de transfert : l'archive est **comptée en échec** et le run
   **continue** ; on relance à la main plus tard (tout est alors recompressé, §6).
 - **Aucune vérification post-transfert** : le code retour de `proton-drive` fait foi.
-- ⬜ **Gros fichier** : `Photos.zip` ≈ 3,2 Go en un seul upload — **à valider lors du premier
-  run réel**, lancé à la main dans un terminal (le `timeout` Piloter de 1 h peut être dépassé
-  à froid, cf. §8).
+- ✅ **Gros fichier** *(mesuré le 2026-10-18)* : `photos.zip` (3,19 Go) envoyé en **9:01** en un
+  seul upload ; **run complet : 14:25** pour 22 archives (4,63 Go) — bien en deçà du `timeout`
+  Piloter de 1 h, **aucun ajustement nécessaire** (cf. §8).
 
 ## 6. Processus (déroulé d'une exécution)
 
@@ -198,8 +201,9 @@ tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer r
 - Espace disque : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au 2026-10-18) —
   aucun garde-fou dédié, l'échec d'écriture restant un échec explicite.
 
-⬜ **Première validation réelle** (I4/I5) : transférer les archives d'un run complet et
-mesurer la durée, en particulier celle de `Photos.zip` (≈ 3,2 Go, un seul upload).
+✅ **Première validation réelle** (2026-10-18) : run complet en **14:25** — 22 archives créées
+(4,63 Go), 22 envoyées, **0 échec**, `backup/` vidé, code retour `0` (dont `photos.zip`
+= 3,19 Go, 9:01).
 
 ## 7. Configuration
 
@@ -262,11 +266,10 @@ l'extension **Piloter** (même approche qu'`autobackup`).
 - Un **adaptateur** `piloter/scripts/databackup-start.sh` qui délègue par `exec` à ce
   `start.sh` (glue de convention seulement, comme `autobackup-start.sh`).
 - Un bouton **déclencheur** « Sauvegarde docs » : `confirm: true`, **`timeout: 3600` (1 h)**
-  *(décidé le 2026-10-18, comme `autobackup`)*. ⚠️ Un premier run **à froid** peut dépasser
-  l'heure (≈ 4,8 Go à envoyer, dont une archive de 3,2 Go) : le **premier run réel sera lancé
-  à la main, dans un terminal** (aucun timeout), pour mesurer la durée réelle ; le `timeout`
-  du bouton sera ajusté ensuite si nécessaire. Un run coupé par le `timeout` n'est pas perdu :
-  arrêt propre, verrou libéré, `backup/` vidé, il suffit de relancer.
+  *(décidé le 2026-10-18, comme `autobackup`)*. ✅ **Confirmé par la mesure du 2026-10-18** :
+  run complet à froid en **14:25** (≈ 4,8 Go) — le timeout de 1 h laisse une large marge,
+  **aucun ajustement nécessaire**. Un run coupé par le `timeout` n'est pas perdu : arrêt propre,
+  verrou libéré, `backup/` vidé, il suffit de relancer.
 - Optionnel, plus tard : `piloter/scripts/databackup-status.sh` lisant `.databackup.lock`
   pour afficher « en cours ».
 - **Aucune planification** *(décision définitive du 2026-10-18)* : ni cron, ni timer systemd.
@@ -367,12 +370,12 @@ Pour mémoire, la procédure à écrire puis tester :
   téléchargement), procédure à écrire et tester ensuite.
 - **Aucune planification** : décision **définitive** (ni cron ni timer systemd) (§2, §8).
 - **Noms de dossiers et d'archives visibles** dans le log et le terminal (§11).
-- `timeout` du bouton Piloter : **1 h** ; premier run réel lancé **à la main** pour mesurer la
-  durée réelle, ajustement ensuite si besoin (§8).
+- `timeout` du bouton Piloter : **1 h**, **confirmé** par le run réel du 2026-10-18 (14:25) ;
+  premier run lancé **à la main**, aucun ajustement nécessaire (§8).
 
-**Seule vérification restante** (ce n'est plus une question) : ⬜ premier run réel complet —
-mesurer la durée, en particulier l'upload de `Photos.zip` (≈ 3,2 Go), et confirmer le `timeout`
-du bouton (§5, §8).
+**Vérifications réelles : faites** (2026-10-18) — ✅ premier run réel complet : **14:25** pour
+22 archives (4,63 Go), `photos.zip` (3,19 Go) en 9:01, **0 échec**, `backup/` vidé ; `timeout`
+Piloter de **1 h confirmé** (§5, §6, §8). Le CDC v1 est désormais **intégralement vérifié**.
 
 ## 13. Évolutions envisagées (hors v1)
 
