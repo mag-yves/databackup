@@ -306,6 +306,10 @@ Pour mémoire, la procédure à écrire puis tester :
 - **Mot de passe des zips** : `.env` local non versionné (priorité à `DATABACKUP_ZIP_PASSWORD`),
   jamais dans le code, les logs ou la sortie d'exécution (cf. §7) ; conservé dans le
   gestionnaire de mots de passe de Yves.
+- **Exception assumée** *(décidée le 2026-10-18)* : le mot de passe figure **en clair au §4** du
+  présent CDC. Dépôt **privé**, script **déclenché uniquement en local** dans la session de
+  Yves. La règle « jamais dans le **code**, les **logs** ni la **sortie d'exécution** » reste
+  entière : seul le document versionné fait exception.
 - **Noms de dossiers et d'archives visibles** dans le log et dans le terminal *(décidé le
   2026-10-18)* : c'est ce qui rend le diagnostic possible (`[7/22] photos.zip — 3,2 Go —
   4:12`). Machine personnelle, dépôt privé, `logs/` non versionné — acceptable.

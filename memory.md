@@ -17,7 +17,8 @@
   (`scan`/`archive` seuls le laissent en place) — §3, §6.
 - Un zip par dossier de premier niveau + `documents.zip` (fichiers racine) ; **AES-256**,
   nommage normalisé, `ZIP_STORED` sur les formats compressés, aucun filtrage — §3, §4.
-- Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD`), jamais journalisé ;
+- Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD`) ; **en clair au CDC §4**
+  (exception assumée, dépôt privé — §11), mais jamais dans le code, les logs ni la sortie ;
   destination `/my-files/databackup` en `upload -f replace`, orphelines conservées, pas de
   quota, échec d'upload → **on continue** — §5, §7.
 - **I1/I2** : `start.sh` fait `exec` du module ; verrou `.databackup.lock` tenu par le module
