@@ -25,9 +25,12 @@ START_SCRIPT = MODULE_PATH.parent / "start.sh"
 
 @pytest.fixture
 def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """Isole le projet dans un dossier temporaire (backup, logs, verrou, .env)."""
+    """Isole le projet dans un dossier temporaire (source, backup, logs, verrou, .env)."""
     backup = tmp_path / "backup"
     backup.mkdir()
+    source = tmp_path / "source"
+    source.mkdir()
+    monkeypatch.setattr(databackup, "SOURCE_DIR", source)
     monkeypatch.setattr(databackup, "BACKUP_DIR", backup)
     monkeypatch.setattr(databackup, "LOGS_DIR", tmp_path / "logs")
     monkeypatch.setattr(databackup, "LOCK_FILE", tmp_path / ".databackup.lock")

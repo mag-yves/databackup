@@ -9,10 +9,10 @@
 - ``cleanup`` : vide ``backup/`` ;
 - ``all`` : scan → archive → transfer, puis vidage de ``backup/`` (défaut).
 
-**I1 — socle technique** : ce module ne contient encore aucune logique métier. Les étapes
-``scan`` / ``archive`` / ``transfer`` sont des ébauches ; seule l'ossature est en place
-(arguments, journalisation horodatée avec rotation, verrou PID, résolution du secret, codes
-retour, arrêt propre sur SIGTERM / SIGINT, options ``--dry-run`` et ``--limit``).
+**Avancement** : I1 (socle) et I2 (``scan``) sont en place. Les étapes ``archive`` et
+``transfer`` restent des ébauches (I3 / I4). Le socle fournit les arguments, la journalisation
+horodatée avec rotation, le verrou PID, la résolution du secret, les codes retour, l'arrêt
+propre sur SIGTERM / SIGINT et les options ``--dry-run`` / ``--limit``.
 """
 
 from __future__ import annotations
@@ -20,11 +20,14 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import re
 import shutil
 import signal
 import sys
 import time
+import unicodedata
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
@@ -79,6 +82,10 @@ class LockError(RuntimeError):
     """Un autre run est déjà en cours (code retour 5)."""
 
 
+class ScanError(RuntimeError):
+    """Scan impossible (source absente, collision de noms d'archives) — cf. cdc.md §3, §4."""
+
+
 # --- Utilitaires ------------------------------------------------------------
 
 
@@ -88,6 +95,16 @@ def format_duration(seconds: float) -> str:
     hours, remainder = divmod(total, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours}:{minutes:02d}:{secs:02d}"
+
+
+def format_size(num_bytes: int) -> str:
+    """Formate une taille en octets de façon lisible (o, Ko, Mo, Go)."""
+    size = float(num_bytes)
+    for unit in ("o", "Ko", "Mo"):
+        if size < 1024:
+            return f"{size:.0f} {unit}" if unit == "o" else f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.2f} Go"
 
 
 def setup_logging(logs_dir: Path | None = None, keep: int = LOG_KEEP) -> Path:
@@ -294,6 +311,179 @@ def _final_cleanup() -> bool:
     return True
 
 
+# --- Scan des sources -------------------------------------------------------
+
+
+def normalize_archive_name(folder_name: str) -> str:
+    """Normalise un nom de dossier en base de nom d'archive (cf. cdc.md §4).
+
+    Accents supprimés (NFKD), passage en minuscules, tout groupe de caractères hors
+    ``a-z0-9`` remplacé par un tiret, tirets de bord retirés. Le suffixe ``.zip`` n'est
+    pas ajouté (il l'est à la construction du plan).
+    """
+    decomposed = unicodedata.normalize("NFKD", folder_name)
+    without_accents = "".join(char for char in decomposed if not unicodedata.combining(char))
+    return re.sub(r"[^a-z0-9]+", "-", without_accents.lower()).strip("-")
+
+
+@dataclass(frozen=True)
+class ArchivePlan:
+    """Archive prévue par le scan : nom cible, origine, contenu estimé."""
+
+    archive_name: str
+    origin: Path
+    label: str
+    file_count: int
+    total_size: int
+
+
+@dataclass(frozen=True)
+class ScanReport:
+    """Résultat d'un scan : archives prévues, dossiers vides exclus, liens ignorés."""
+
+    plans: list[ArchivePlan]
+    excluded: list[Path]
+    symlinks: list[Path]
+
+    @property
+    def total_size(self) -> int:
+        return sum(plan.total_size for plan in self.plans)
+
+
+def collect_folder_files(folder: Path) -> tuple[list[Path], list[Path]]:
+    """Parcourt ``folder`` récursivement **sans suivre** les liens symboliques.
+
+    Retourne ``(fichiers réguliers, liens symboliques)``, triés. Les sous-dossiers vides
+    sont ignorés (aucune archive n'est créée pour eux à ce stade) ; les liens symboliques
+    ne sont jamais suivis (évite les boucles et les sorties de périmètre — cdc.md §3).
+    """
+    files: list[Path] = []
+    symlinks: list[Path] = []
+    for current, dirnames, filenames in os.walk(folder, followlinks=False):
+        current_path = Path(current)
+        kept_dirs = []
+        for dirname in dirnames:
+            child = current_path / dirname
+            if child.is_symlink():
+                symlinks.append(child)
+            else:
+                kept_dirs.append(dirname)
+        dirnames[:] = sorted(kept_dirs)
+        for filename in filenames:
+            child = current_path / filename
+            if child.is_symlink():
+                symlinks.append(child)
+            elif child.is_file():
+                files.append(child)
+    return sorted(files), sorted(symlinks)
+
+
+def _measure_files(files: list[Path]) -> int:
+    """Somme des tailles, en avertissant pour tout fichier illisible (sans interrompre)."""
+    total = 0
+    for path in files:
+        try:
+            total += path.stat().st_size
+        except OSError as exc:
+            logger.warning("Fichier illisible, ignoré dans l'estimation : %s (%s)", path, exc)
+    return total
+
+
+def _check_archive_conflicts(plans: list[ArchivePlan]) -> None:
+    """Échoue si deux archives visent le même nom, ou si un nom normalisé est vide (§4)."""
+    labels_by_name: dict[str, list[str]] = {}
+    for plan in plans:
+        labels_by_name.setdefault(plan.archive_name, []).append(plan.label)
+
+    conflicts = [f"{name} : {', '.join(labels)}" for name, labels in sorted(labels_by_name.items()) if len(labels) > 1]
+    if conflicts:
+        raise ScanError("Collision de noms d'archives — " + " ; ".join(conflicts))
+
+    empty_names = [plan.label for plan in plans if plan.archive_name == ".zip"]
+    if empty_names:
+        raise ScanError("Nom d'archive impossible (nom normalisé vide) pour : " + ", ".join(empty_names))
+
+
+def plan_archives(source_dir: Path | None = None, limit: int | None = None) -> ScanReport:
+    """Construit le plan de sauvegarde à partir de ``source_dir`` (cf. cdc.md §3, §4).
+
+    Un dossier de premier niveau = une archive récursive ; les fichiers placés directement
+    à la racine vont dans ``documents.zip``. Un dossier vide est exclu. ``limit`` ne retient
+    que les N premiers dossiers (les fichiers racine restent inclus). Lève :class:`ScanError`
+    si la source est absente ou si des noms d'archives se recouvrent.
+    """
+    source = source_dir or SOURCE_DIR
+    if not source.is_dir():
+        raise ScanError(f"Dossier source introuvable : {source} — le symlink source/ est-il en place ?")
+
+    folder_plans: list[ArchivePlan] = []
+    excluded: list[Path] = []
+    symlinks: list[Path] = []
+    root_files: list[Path] = []
+
+    for entry in sorted(source.iterdir(), key=lambda path: path.name):
+        if entry.is_symlink():
+            symlinks.append(entry)
+        elif entry.is_file():
+            root_files.append(entry)
+        elif entry.is_dir():
+            files, links = collect_folder_files(entry)
+            symlinks.extend(links)
+            if not files:
+                excluded.append(entry)
+                continue
+            folder_plans.append(
+                ArchivePlan(
+                    archive_name=f"{normalize_archive_name(entry.name)}.zip",
+                    origin=entry,
+                    label=entry.name,
+                    file_count=len(files),
+                    total_size=_measure_files(files),
+                )
+            )
+
+    if limit is not None:
+        folder_plans = folder_plans[:limit]
+
+    plans = list(folder_plans)
+    if root_files:
+        plans.append(
+            ArchivePlan(
+                archive_name="documents.zip",
+                origin=source,
+                label="fichiers racine",
+                file_count=len(root_files),
+                total_size=_measure_files(root_files),
+            )
+        )
+
+    _check_archive_conflicts(plans)
+    return ScanReport(plans=plans, excluded=excluded, symlinks=symlinks)
+
+
+def _log_scan(report: ScanReport, dry_run: bool) -> None:
+    for symlink in report.symlinks:
+        logger.warning("Lien symbolique ignoré : %s", symlink)
+    for folder in report.excluded:
+        logger.info("Dossier de premier niveau vide, exclu : %s", folder.name)
+
+    total = len(report.plans)
+    logger.info("%d archive(s) prévue(s), %d dossier(s) vide(s) exclu(s).", total, len(report.excluded))
+    for index, plan in enumerate(report.plans, 1):
+        logger.info(
+            "[%d/%d] %s -> %s (%d fichier(s), %s)",
+            index,
+            total,
+            plan.label,
+            plan.archive_name,
+            plan.file_count,
+            format_size(plan.total_size),
+        )
+    logger.info("Volume estimé : %s.", format_size(report.total_size))
+    if dry_run:
+        logger.info("Cible : %s (aucun envoi en --dry-run).", PROTON_PARENT)
+
+
 # --- Étapes (ébauches I1, logique à venir) ----------------------------------
 
 
@@ -308,8 +498,13 @@ def _log_stub(step: str, limit: int | None, dry_run: bool) -> None:
 
 
 def step_scan(*, limit: int | None = None, dry_run: bool = False) -> int:
-    """Étape ``scan`` — squelette (implémentée en I2)."""
-    _log_stub("scan", limit, dry_run)
+    """Étape ``scan`` : affiche le plan de sauvegarde, sans rien écrire ni envoyer."""
+    try:
+        report = plan_archives(limit=limit)
+    except ScanError as exc:
+        logger.error("%s", exc)
+        return EXIT_ERROR
+    _log_scan(report, dry_run)
     return EXIT_OK
 
 
