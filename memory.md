@@ -6,13 +6,13 @@
 
 ## État courant
 
-- **CDC v1 figé et intégralement vérifié en réel** (récap §12). **I1 à I5 livrés** (`all` =
+- **CDC v1 figé et intégralement vérifié en réel** (récap §12). **I1 à I6 livrés** (`all` =
   scan → archive → transfert → nettoyage, **récapitulatif final**, **`backup/` vidé quoi qu'il
-  arrive**) ; **77 tests** verts, `ruff` propre.
+  arrive**) ; **77 tests** verts, `ruff` propre ; `README.md` complet.
 - **Run réel complet** (2026-10-18) : **14:25**, **22 archives** (4,63 Go, **0 échec**),
   `photos.zip` (3,19 Go) en 9:01 ; `timeout` Piloter **1 h confirmé** ; 22 archives uniques
   côté Proton. Prérequis prêts : `proton-drive` 0.9.0, session active, destination, `.env`.
-- Prochain jalon : **I6 — `README.md`** (cf. `TODO.md`).
+- **La v1 est terminée** ; la suite est au backlog de `TODO.md` (Piloter, restauration…).
 
 ## Décisions actées (détail au CDC §3–§8)
 
@@ -38,5 +38,6 @@
 
 ## Prochaines actions
 
-- 🔴 **I6 — `README.md`** : prérequis, `./install.sh`, `.env`, destination, commandes, codes
-  retour, logs, usage manuel et via Piloter.
+- 🔴 Backlog (cf. `TODO.md`) : **Piloter** (adaptateur `databackup-start.sh` + bouton
+  déclencheur, voire statut « en cours »), **restauration** (hors v1), progression
+  **intra-upload**, historique daté.

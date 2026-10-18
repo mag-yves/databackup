@@ -1,8 +1,8 @@
 # TODO — DataBackup
 
-État courant : **I1 à I5 livrés et vérifiés en réel** le 2026-10-18 — run complet à froid :
+État courant : **I1 à I6 livrés et vérifiés en réel** le 2026-10-18 — run complet à froid :
 **14:25** pour 22 archives (4,63 Go), 0 échec, `timeout` Piloter de 1 h confirmé ; 77 tests
-verts, `ruff` propre. Prochaine étape : **I6 — `README.md`**.
+verts, `ruff` propre ; `README.md` complet. **La v1 est terminée** ; la suite est au backlog.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -112,7 +112,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   (3,19 Go) archivé en 11 s et **envoyé en 9:01**, `prusa.zip` en 1:41. Le `timeout` Piloter
   de **1 h est confirmé** (large marge). Côté Proton : **22 archives uniques**, aucune orpheline.
 
-## I6 — Documentation utilisateur (`README.md`)
+## I6 — Documentation utilisateur (`README.md`) ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : quelqu'un qui découvre le dossier peut installer et lancer la sauvegarde.
 - **Livrable** : `README.md` — prérequis, `./install.sh`, création de `.env` (mot de passe),
@@ -120,6 +120,12 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   usage manuel **et** via Piloter.
 - **DoD** : les commandes du README sont rejouables telles quelles ; il renvoie au `cdc.md` §10
   pour la restauration (**hors v1**).
+- **Résultat** : `README.md` complet — principe, prérequis, installation (`./install.sh`,
+  symlinks `source/`/`backup/`, `.env`, connexion Proton, création de la destination),
+  utilisation (commandes, options, codes retour, enchaînements), journalisation, annulation,
+  usage Piloter, renvoi au `cdc.md` §10 (**restauration hors v1**), dépannage, développement.
+  **Aucun chemin personnel** (règle `AGENTS.md`) ; commandes vérifiées rejouables (`--help`,
+  `scan`, argument invalide → code `2`).
 
 ---
 
