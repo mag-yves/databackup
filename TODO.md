@@ -1,7 +1,7 @@
 # TODO — DataBackup
 
-État courant : **CDC v1 figé** le 2026-10-18 (les trois lots de décisions sont tranchés, récap
-au `cdc.md` §12) ; **aucun code** n'est encore écrit. La prochaine étape est **I1**.
+État courant : **I1 « socle technique » livré** le 2026-10-18 (squelette exécutable, 26 tests
+verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I2**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -18,7 +18,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   **planification définitivement exclue** (§2, §8). Reste une vérification (non bloquante) :
   le premier run réel complet, pour mesurer la durée.
 
-## I1 — Socle technique
+## I1 — Socle technique ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : squelette exécutable **sans logique métier**.
 - **Livrable** : `start.sh` (venv + lanceur, **conforme au contrat Piloter du CDC §8** : sans
@@ -32,6 +32,11 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   rien ; `ruff` et `pytest` passent ; tests du parseur d'arguments, du logger, du verrou et de
   la résolution du mot de passe ; `.gitignore` couvre binaire, venv, logs, `.env` et secrets ;
   **aucun secret dans le code ni dans les logs**.
+- **Résultat** : `databackup.py` porte l'ossature (arguments, journal + rotation, verrou PID
+  repris s'il est obsolète, résolution du secret, arrêt propre SIGTERM/SIGINT, codes retour
+  `0`–`5`, `--dry-run` / `--limit`) ; `start.sh` fait `exec` du module (groupe de processus
+  préservé). Les étapes `scan` / `archive` / `transfer` sont des **ébauches** (log + code 0) :
+  la logique arrive en I2/I3/I4. **26 tests** verts, `ruff` et `ruff format` propres.
 
 ## I2 — Scan des sources
 
