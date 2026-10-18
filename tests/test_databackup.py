@@ -35,7 +35,8 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(databackup, "LOGS_DIR", tmp_path / "logs")
     monkeypatch.setattr(databackup, "LOCK_FILE", tmp_path / ".databackup.lock")
     monkeypatch.setattr(databackup, "ENV_FILE", tmp_path / ".env")
-    monkeypatch.delenv(databackup.PASSWORD_ENV_VAR, raising=False)
+    # Un run ``all``/``archive`` exige un mot de passe (I3) : la fixture en fournit un.
+    monkeypatch.setenv(databackup.PASSWORD_ENV_VAR, "mot-de-passe-de-test")
     return tmp_path
 
 
@@ -133,14 +134,16 @@ class TestPassword:
         (sandbox / ".env").write_text(f"{databackup.PASSWORD_ENV_VAR}=depuis-fichier\n", encoding="utf-8")
         assert databackup.resolve_password() == "depuis-env"
 
-    def test_reads_env_file(self, sandbox: Path) -> None:
+    def test_reads_env_file(self, sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(databackup.PASSWORD_ENV_VAR, raising=False)
         (sandbox / ".env").write_text(
             '# commentaire ignoré\nexport DATABACKUP_ZIP_PASSWORD = "secret" \nAUTRE=valeur\n',
             encoding="utf-8",
         )
         assert databackup.resolve_password() == "secret"
 
-    def test_missing_returns_none(self, sandbox: Path) -> None:
+    def test_missing_returns_none(self, sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv(databackup.PASSWORD_ENV_VAR, raising=False)
         assert databackup.resolve_password() is None
 
     def test_log_never_contains_the_secret(self, sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:

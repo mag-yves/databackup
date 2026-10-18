@@ -9,8 +9,8 @@
 - ``cleanup`` : vide ``backup/`` ;
 - ``all`` : scan → archive → transfer, puis vidage de ``backup/`` (défaut).
 
-**Avancement** : I1 (socle) et I2 (``scan``) sont en place. Les étapes ``archive`` et
-``transfer`` restent des ébauches (I3 / I4). Le socle fournit les arguments, la journalisation
+**Avancement** : I1 (socle), I2 (``scan``) et I3 (``archive``) sont en place. L'étape
+``transfer`` reste une ébauche (I4). Le socle fournit les arguments, la journalisation
 horodatée avec rotation, le verrou PID, la résolution du secret, les codes retour, l'arrêt
 propre sur SIGTERM / SIGINT et les options ``--dry-run`` / ``--limit``.
 """
@@ -31,6 +31,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+import pyzipper
+
 # --- Configuration ----------------------------------------------------------
 
 PROJECT_DIR = Path(__file__).resolve().parent
@@ -49,6 +51,10 @@ PASSWORD_ENV_VAR = "DATABACKUP_ZIP_PASSWORD"
 
 # Rotation des journaux : on ne conserve que les N derniers — cf. cdc.md §9.
 LOG_KEEP = 7
+
+# Extensions déjà compressées : stockées sans compression (mais toujours chiffrées),
+# liste figée du CDC §4.
+STORED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".mp4", ".stl", ".3mf", ".zip"})
 
 # Commande appliquée quand aucune n'est fournie — cf. cdc.md §8.
 DEFAULT_COMMAND = "all"
@@ -335,6 +341,7 @@ class ArchivePlan:
     label: str
     file_count: int
     total_size: int
+    is_root_files: bool = False
 
 
 @dataclass(frozen=True)
@@ -454,6 +461,7 @@ def plan_archives(source_dir: Path | None = None, limit: int | None = None) -> S
                 label="fichiers racine",
                 file_count=len(root_files),
                 total_size=_measure_files(root_files),
+                is_root_files=True,
             )
         )
 
@@ -484,7 +492,89 @@ def _log_scan(report: ScanReport, dry_run: bool) -> None:
         logger.info("Cible : %s (aucun envoi en --dry-run).", PROTON_PARENT)
 
 
-# --- Étapes (ébauches I1, logique à venir) ----------------------------------
+# --- Création des archives --------------------------------------------------
+
+
+def _compress_type(path: Path) -> int:
+    """Compression d'un fichier : stocké si le format est déjà compressé, sinon dégonflé (§4)."""
+    return pyzipper.ZIP_STORED if path.suffix.lower() in STORED_EXTENSIONS else pyzipper.ZIP_DEFLATED
+
+
+def collect_root_files(source: Path) -> list[Path]:
+    """Fichiers posés directement à la racine de ``source`` (liens symboliques exclus)."""
+    return sorted(entry for entry in source.iterdir() if not entry.is_symlink() and entry.is_file())
+
+
+def collect_empty_dirs(folder: Path) -> list[Path]:
+    """Sous-dossiers vides de ``folder`` (aucun fichier dans leur sous-arbre).
+
+    Conservés dans l'archive pour restituer fidèlement l'arborescence (cf. cdc.md §3).
+    """
+    non_empty: set[Path] = set()
+    empty: list[Path] = []
+    for current, dirnames, filenames in os.walk(folder, topdown=False, followlinks=False):
+        path = Path(current)
+        if path == folder:
+            continue
+        has_file = any(not (path / name).is_symlink() and (path / name).is_file() for name in filenames)
+        has_content = has_file or any((path / name) in non_empty for name in dirnames)
+        if has_content:
+            non_empty.add(path)
+        else:
+            empty.append(path)
+    return sorted(empty)
+
+
+@dataclass(frozen=True)
+class ArchiveStats:
+    """Ce qui a réellement été écrit dans une archive."""
+
+    file_count: int
+    empty_dirs: int
+    size: int
+
+
+def write_archive(plan: ArchivePlan, destination: Path, password: str) -> ArchiveStats:
+    """Écrit l'archive chiffrée AES-256 de ``plan`` dans ``destination`` (cf. cdc.md §4).
+
+    L'arborescence interne est préservée (chemins relatifs à l'origine) et les sous-dossiers
+    vides sont conservés. Un fichier devenu illisible est signalé et ignoré, sans interrompre
+    le reste (cf. cdc.md §6).
+    """
+    base = plan.origin
+    if plan.is_root_files:
+        files = collect_root_files(base)
+        empty_dirs: list[Path] = []
+    else:
+        files, _symlinks = collect_folder_files(base)
+        empty_dirs = collect_empty_dirs(base)
+
+    written = 0
+    with pyzipper.AESZipFile(
+        destination,
+        "w",
+        compression=pyzipper.ZIP_DEFLATED,
+        encryption=pyzipper.WZ_AES,
+    ) as archive:
+        archive.setpassword(password.encode("utf-8"))
+        for empty_dir in empty_dirs:
+            archive.writestr(f"{empty_dir.relative_to(base).as_posix()}/", b"")
+        for file in files:
+            try:
+                archive.write(
+                    file,
+                    arcname=file.relative_to(base).as_posix(),
+                    compress_type=_compress_type(file),
+                )
+            except OSError as exc:
+                logger.warning("Fichier illisible, ignoré : %s (%s)", file, exc)
+                continue
+            written += 1
+
+    return ArchiveStats(file_count=written, empty_dirs=len(empty_dirs), size=destination.stat().st_size)
+
+
+# --- Étapes -----------------------------------------------------------------
 
 
 def _log_stub(step: str, limit: int | None, dry_run: bool) -> None:
@@ -509,9 +599,59 @@ def step_scan(*, limit: int | None = None, dry_run: bool = False) -> int:
 
 
 def step_archive(*, limit: int | None = None, dry_run: bool = False) -> int:
-    """Étape ``archive`` — squelette (implémentée en I3)."""
-    _log_stub("archive", limit, dry_run)
-    return EXIT_OK
+    """Étape ``archive`` : crée les zips chiffrés dans ``backup/`` (cf. cdc.md §4)."""
+    try:
+        report = plan_archives(limit=limit)
+    except ScanError as exc:
+        logger.error("%s", exc)
+        return EXIT_ERROR
+
+    if dry_run:
+        logger.info("--dry-run : %d archive(s) seraient créées dans %s.", len(report.plans), BACKUP_DIR)
+        return EXIT_OK
+
+    password = resolve_password()
+    if not password:
+        logger.error(
+            "Mot de passe des archives introuvable (ni %s, ni %s) — archivage impossible.",
+            PASSWORD_ENV_VAR,
+            ENV_FILE.name,
+        )
+        return EXIT_ERROR
+
+    total = len(report.plans)
+    logger.info("%d archive(s) à créer dans %s.", total, BACKUP_DIR)
+    volume = 0
+    errors = 0
+    for index, plan in enumerate(report.plans, 1):
+        logger.info("[%d/%d] %s -> %s ...", index, total, plan.label, plan.archive_name)
+        started = time.monotonic()
+        try:
+            stats = write_archive(plan, BACKUP_DIR / plan.archive_name, password)
+        except OSError as exc:
+            errors += 1
+            logger.error("[%d/%d] [ERREUR] %s : %s", index, total, plan.archive_name, exc)
+            continue
+        volume += stats.size
+        logger.info(
+            "[%d/%d] OK %s (%d fichier(s), %d dossier(s) vide(s), %s, %s)",
+            index,
+            total,
+            plan.archive_name,
+            stats.file_count,
+            stats.empty_dirs,
+            format_size(stats.size),
+            format_duration(time.monotonic() - started),
+        )
+
+    logger.info(
+        "Archivage terminé : %d/%d archive(s), %s, %d erreur(s).",
+        total - errors,
+        total,
+        format_size(volume),
+        errors,
+    )
+    return EXIT_ERROR if errors else EXIT_OK
 
 
 def step_transfer(*, dry_run: bool = False) -> int:
@@ -523,24 +663,25 @@ def step_transfer(*, dry_run: bool = False) -> int:
 def execute(command: str, *, limit: int | None, dry_run: bool) -> int:
     """Exécute la commande demandée et retourne un code retour.
 
-    Le vidage final de ``backup/`` (``all``, ``cleanup``) n'est pas fait ici : il est
-    garanti par :func:`main` dans son ``finally``, y compris en cas d'annulation.
+    ``all`` et ``archive`` vident ``backup/`` au début (cf. cdc.md §6, étape 2). Le vidage
+    final (``all``, ``cleanup``) est garanti par :func:`main` dans son ``finally``, y compris
+    en cas d'annulation.
     """
     if command == "scan":
         return step_scan(limit=limit, dry_run=dry_run)
-    if command == "archive":
-        if not dry_run:
-            require_backup_dir()
-        return step_archive(limit=limit, dry_run=dry_run)
     if command == "transfer":
         return step_transfer(dry_run=dry_run)
     if command == "cleanup":
         return EXIT_OK
 
-    # all
+    # all / archive — dossier temporaire vidé avant tout traitement
     if not dry_run:
         require_backup_dir()
         logger.info("Vidage initial de backup/ : %d élément(s) supprimé(s).", empty_backup())
+
+    if command == "archive":
+        return step_archive(limit=limit, dry_run=dry_run)
+
     return_code = step_scan(limit=limit, dry_run=dry_run)
     if return_code == EXIT_OK:
         return_code = step_archive(limit=limit, dry_run=dry_run)
@@ -598,7 +739,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Mode --dry-run : rien ne sera écrit dans backup/, rien ne sera envoyé.")
     if args.limit is not None:
         logger.info("Limite : %d dossier(s) de premier niveau.", args.limit)
-    log_password_source()
+    if command in ("all", "archive"):
+        log_password_source()
 
     install_signal_handlers()
     try:
