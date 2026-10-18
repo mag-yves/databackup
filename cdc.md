@@ -45,7 +45,7 @@ site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
 | Fichiers à la racine | regroupés dans **`documents.zip`** |
 | Sous-dossier d'un dossier | inclus dans l'archive du dossier parent (pas d'archive par sous-dossier) |
 | Dossiers vides | **pas d'archive** pour un dossier de premier niveau vide ; **dans** une archive, les sous-dossiers vides sont **conservés** (arborescence fidèle). *(les 2 dossiers vides relevés sont imbriqués, aucun au premier niveau)* |
-| Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine `source/` est elle-même un lien, résolu une fois ; aucun lien interne aujourd'hui)* |
+| Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine `source/` est elle-même un lien, résolu une fois ; **1 lien interne relevé le 2026-10-18** dans `Prusa/Modèles/02 en cours/Zetests` — ignoré et signalé)* |
 | Fichiers temporaires | **inclus** : le script **ne filtre rien** (y compris `Compta Homebank.xhb~` et les `.bak` datés) |
 | Fichiers cachés (`.…`) | **inclus** *(aucun aujourd'hui à la racine)* |
 | Fichiers modifiés pendant l'exécution | **avertir et continuer** : le zip contient la version lue au moment de l'archivage ; un fichier disparu ou illisible est **signalé dans le log** et n'interrompt pas le dossier (il sera repris au run suivant) |

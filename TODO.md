@@ -1,7 +1,7 @@
 # TODO — DataBackup
 
-État courant : **I1 « socle technique » livré** le 2026-10-18 (squelette exécutable, 26 tests
-verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I2**.
+État courant : **I1 et I2 livrés** le 2026-10-18 (socle exécutable + étape `scan` ; 47 tests
+verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I3**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -38,13 +38,19 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   préservé). Les étapes `scan` / `archive` / `transfer` sont des **ébauches** (log + code 0) :
   la logique arrive en I2/I3/I4. **26 tests** verts, `ruff` et `ruff format` propres.
 
-## I2 — Scan des sources
+## I2 — Scan des sources ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : savoir **ce qui serait sauvegardé**, sans rien écrire ni envoyer.
 - **Livrable** : étape `scan` : dossiers retenus, exclus, vides, volume estimé, et le nom
   d'archive prévu pour chacun.
 - **DoD** : tests sur une arborescence **factice** (exclusions, dossiers vides, liens
   symboliques, fichiers temporaires) ; aucune écriture dans les sources (contrôle après run).
+- **Résultat** : `scan` construit le plan — nommage normalisé (§4), `documents.zip` pour la
+  racine, dossiers vides exclus, liens symboliques ignorés + avertis, collisions → **échec du
+  scan** ; `--limit N` retient les N premiers dossiers (les fichiers racine restent inclus).
+  **21 tests** ajoutés (dont un contrôle d'empreinte : aucune écriture dans `source/`).
+  Run réel : **22 archives**, **4,70 Go**, 2 315 fichiers, **1 lien symbolique** interne
+  détecté (`Prusa/Modèles/02 en cours/Zetests`, ignoré) — CDC §3 corrigé en conséquence.
 
 ## I3 — Création des archives
 
