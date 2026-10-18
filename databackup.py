@@ -54,6 +54,11 @@ PASSWORD_ENV_VAR = "DATABACKUP_ZIP_PASSWORD"
 # Rotation des journaux : on ne conserve que les N derniers — cf. cdc.md §9.
 LOG_KEEP = 7
 
+# Plage de dates représentable dans un zip (cf. cdc.md §6) : hors plage, la date est ramenée
+# à 1980 pour ne pas perdre le fichier.
+ZIP_MIN_YEAR = 1980
+ZIP_MAX_YEAR = 2107
+
 # Extensions déjà compressées : stockées sans compression (mais toujours chiffrées),
 # liste figée du CDC §4.
 STORED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".mp4", ".stl", ".3mf", ".zip"})
@@ -536,12 +541,27 @@ class ArchiveStats:
     size: int
 
 
+def modification_year(path: Path) -> int | None:
+    """Année de dernière modification, ou ``None`` si le fichier est disparu ou illisible.
+
+    Une date inexploitable (valeur aberrante) est signalée par ``0`` : elle est traitée comme
+    hors plage, mais le fichier reste archivé (cf. cdc.md §6).
+    """
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime).year
+    except OSError:
+        return None
+    except (OverflowError, ValueError):
+        return 0
+
+
 def write_archive(plan: ArchivePlan, destination: Path, password: str) -> ArchiveStats:
     """Écrit l'archive chiffrée AES-256 de ``plan`` dans ``destination`` (cf. cdc.md §4).
 
     L'arborescence interne est préservée (chemins relatifs à l'origine) et les sous-dossiers
-    vides sont conservés. Un fichier devenu illisible est signalé et ignoré, sans interrompre
-    le reste (cf. cdc.md §6).
+    vides sont conservés. Un fichier disparu, illisible, ou que le format refuse est **signalé
+    et ignoré** sans interrompre le reste ; une date de modification hors plage ZIP (avant 1980
+    ou après 2107) est **ramenée à 1980** pour ne pas perdre le fichier (cf. cdc.md §6).
     """
     base = plan.origin
     if plan.is_root_files:
@@ -557,19 +577,26 @@ def write_archive(plan: ArchivePlan, destination: Path, password: str) -> Archiv
         "w",
         compression=pyzipper.ZIP_DEFLATED,
         encryption=pyzipper.WZ_AES,
+        strict_timestamps=False,  # date hors plage : ramenée à 1980 au lieu de lever une erreur
     ) as archive:
         archive.setpassword(password.encode("utf-8"))
         for empty_dir in empty_dirs:
             archive.writestr(f"{empty_dir.relative_to(base).as_posix()}/", b"")
         for file in files:
+            year = modification_year(file)
+            if year is None:
+                logger.warning("Fichier disparu ou illisible pendant l'archivage, ignoré : %s", file)
+                continue
+            if not ZIP_MIN_YEAR <= year <= ZIP_MAX_YEAR:
+                logger.warning("Date de modification hors plage ZIP (ramenée à %d) : %s", ZIP_MIN_YEAR, file)
             try:
                 archive.write(
                     file,
                     arcname=file.relative_to(base).as_posix(),
                     compress_type=_compress_type(file),
                 )
-            except OSError as exc:
-                logger.warning("Fichier illisible, ignoré : %s (%s)", file, exc)
+            except (OSError, ValueError) as exc:
+                logger.warning("Fichier non archivé, ignoré : %s (%s)", file, exc)
                 continue
             written += 1
 
@@ -673,6 +700,9 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunS
             logger.error("[%d/%d] [ERREUR] %s : %s", index, total, plan.archive_name, exc)
             continue
         volume += archive_stats.size
+        if stats is not None:
+            stats.archives_created += 1
+            stats.archive_volume = volume
         logger.info(
             "[%d/%d] OK %s (%d fichier(s), %d dossier(s) vide(s), %s, %s)",
             index,
@@ -691,9 +721,6 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunS
         format_size(volume),
         errors,
     )
-    if stats is not None:
-        stats.archives_created = total - errors
-        stats.archive_volume = volume
     return EXIT_ERROR if errors else EXIT_OK
 
 

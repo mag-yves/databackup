@@ -8,8 +8,9 @@
 
 - **CDC v1 figé** le 2026-10-18 (récap §12). **I1 à I5 (code) livrés** : `all` enchaîne
   scan → archive → transfert → nettoyage, avec **récapitulatif final** et **`backup/` vidé quoi
-  qu'il arrive** ; **74 tests** verts, `ruff` propre. Transfert réel déjà validé (I4) ; **reste
-  le premier run réel complet** (≈ 4,7 Go, à la main).
+  qu'il arrive** ; **77 tests** verts, `ruff` propre. Transfert réel validé (I4) ; 1er run
+  complet interrompu par un bug **corrigé** (fichiers datés 1979 → date ramenée à 1980, CDC §6)
+  ; **à relancer**.
 - Prérequis prêts : `proton-drive` 0.9.0, session Proton active, dossier `/my-files/databackup`.
 - Prochain jalon : premier run réel complet, puis **I6 — `README.md`**.
 

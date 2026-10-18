@@ -250,6 +250,62 @@ def test_unreadable_file_is_skipped(project: Path) -> None:
     assert _namelist(archive) == ["ok.txt"]
 
 
+def test_timestamp_before_1980_is_archived_with_clamped_date(project: Path) -> None:
+    source = project / "source"
+    old = _write(source / "Prusa" / "vieil.stl", b"x" * 10)
+    os.utime(old, (0, 0))  # 1970-01-01 : hors plage ZIP
+
+    archive = _archive_of(project, "Prusa")
+
+    assert _namelist(archive) == ["vieil.stl"]  # le fichier est bien sauvegardé
+    with pyzipper.AESZipFile(archive) as handle:
+        handle.setpassword(PASSWORD.encode("utf-8"))
+        assert handle.getinfo("vieil.stl").date_time == (1980, 1, 1, 0, 0, 0)
+
+
+def test_file_refused_by_the_format_is_skipped(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    source = project / "source"
+    _write(source / "Photos" / "ok.txt", b"OK")
+    _write(source / "Photos" / "bad.txt", b"BAD")
+    real_compress_type = databackup._compress_type
+
+    def flaky(path: Path) -> int:
+        if path.name == "bad.txt":
+            raise ValueError("simulation d'un fichier refusé par le format")
+        return real_compress_type(path)
+
+    monkeypatch.setattr(databackup, "_compress_type", flaky)
+
+    archive = _archive_of(project, "Photos")
+
+    assert _namelist(archive) == ["ok.txt"]  # l'erreur d'un fichier n'interrompt pas l'archive
+
+
+def test_stats_count_created_archives_even_before_a_later_failure(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = project / "source"
+    _write(source / "Aaa" / "a.txt")
+    _write(source / "Bbb" / "b.txt")
+    real_write = databackup.write_archive
+    calls = {"count": 0}
+
+    def flaky(plan: databackup.ArchivePlan, destination: Path, password: str) -> databackup.ArchiveStats:
+        calls["count"] += 1
+        if calls["count"] == 2:
+            raise OSError("disque plein (simulation)")
+        return real_write(plan, destination, password)
+
+    monkeypatch.setattr(databackup, "write_archive", flaky)
+    stats = databackup.RunStats()
+
+    assert databackup.step_archive(stats=stats) == databackup.EXIT_ERROR
+
+    assert stats.archives_planned == 2
+    assert stats.archives_created == 1  # le premier est compté malgré l'échec du second
+    assert stats.archive_volume > 0
+
+
 def test_empty_source_creates_nothing(project: Path) -> None:
     assert databackup.main(["archive"]) == databackup.EXIT_OK
     assert list((project / "backup").iterdir()) == []

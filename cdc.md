@@ -187,6 +187,12 @@ tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer r
   `proton-drive` fait foi (pas d'appel `filesystem size`, pas de comparaison d'empreinte).
 - Un fichier qui **disparaît ou devient illisible** pendant l'archivage → **avertissement
   dans le log et on continue** (il sera repris au run suivant) ; le dossier n'échoue pas.
+- Une **date de modification hors plage ZIP** (avant 1980 ou après 2107) : le fichier est
+  **archivé quand même, avec la date ramenée à 1980**, avec un avertissement — mieux vaut une
+  date approximative que perdre le fichier. *(2 fichiers datés 1979 relevés le 2026-10-18 dans
+  `Prusa` : cause d'un échec réel corrigé en I5.)*
+- Un fichier que le format **refuse d'ajouter** (nom non encodable…) → **avertissement et
+  fichier ignoré**, sans interrompre l'archive ni le dossier.
 - **Relancer repart de zéro** : tout est recompressé (aucun état persisté entre deux
   exécutions). Accepté en v1 — le coût est la lecture de ~4,8 Go.
 - Espace disque : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au 2026-10-18) —

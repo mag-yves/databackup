@@ -101,6 +101,12 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   garanti** par un `finally` en fin de `all`/`cleanup` — succès, échec de scan, échec de
   transfert, `SIGTERM`. **3 tests** ajoutés (résidu après échec de transfert, résidu après
   échec de scan, contenu du récapitulatif) ; le cas `SIGTERM` était déjà couvert.
+- **Correctif (run réel du 2026-10-18)** : un fichier daté **1979** (2 dans `Prusa`) faisait
+  échouer **tout** le run — `ValueError` « ZIP does not support timestamps before 1980 », non
+  rattrapée. Corrigé : date **ramenée à 1980** (`strict_timestamps=False`) avec **avertissement**
+  (le fichier est conservé), **comptage incrémental** des archives (récapitulatif juste même en
+  cas d'échec partiel), et erreur d'un fichier seul → **ignoré sans interrompre**. **3 tests**
+  de régression (**77** au total). Règle consignée au CDC §6 ; correctif revalidé sur `Prusa`.
 - **⬜ Reste** : le **premier run réel complet** (à la main, sans timeout) — mesurer la durée,
   surtout `Photos.zip` (~3,2 Go), puis ajuster le `timeout` du bouton Piloter (§8).
 
