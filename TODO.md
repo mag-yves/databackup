@@ -1,8 +1,8 @@
 # TODO — DataBackup
 
-État courant : **I1 à I4 livrés** le 2026-10-18 (socle, `scan`, `archive`, `transfer` ; 71 tests
-verts, `ruff` propre ; transfert réel vérifié) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait.
-La prochaine étape est **I5**.
+État courant : **I1 à I5 (code) livrés** le 2026-10-18 (socle, `scan`, `archive`, `transfer`,
+enchaînement + récapitulatif ; 74 tests verts, `ruff` propre) ; **I0** (CDC v1 figé, récap
+`cdc.md` §12) fait. Reste le **premier run réel complet**, puis **I6**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -85,7 +85,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   **4 archives, 151 Mo** envoyées en 35 s, `backup/` vidé, code `0` ; **aller-retour vérifié**
   (téléchargement de `documents.zip` puis déchiffrement : 8 fichiers lus).
 
-## I5 — Enchaînement complet, nettoyage et récapitulatif
+## I5 — Enchaînement complet, nettoyage et récapitulatif 🚧 **CODE FAIT** (2026-10-18)
 
 - **Objectif** : une exécution complète fiable, du scan au nettoyage.
 - **Livrable** : commande `all` par défaut (scan → archive → transfer → cleanup), nettoyage
@@ -96,6 +96,13 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   réel complet lancé à la main** (terminal, sans timeout) pour mesurer la durée — en
   particulier l'upload de `Photos.zip` (~3,2 Go) — et ajuster le `timeout` du bouton Piloter
   si besoin.
+- **Résultat (code)** : **récapitulatif final** (archives prévues/créées, volume, envoyées,
+  échecs de transfert, durée, code retour) affiché et journalisé ; **vidage de `backup/`
+  garanti** par un `finally` en fin de `all`/`cleanup` — succès, échec de scan, échec de
+  transfert, `SIGTERM`. **3 tests** ajoutés (résidu après échec de transfert, résidu après
+  échec de scan, contenu du récapitulatif) ; le cas `SIGTERM` était déjà couvert.
+- **⬜ Reste** : le **premier run réel complet** (à la main, sans timeout) — mesurer la durée,
+  surtout `Photos.zip` (~3,2 Go), puis ajuster le `timeout` du bouton Piloter (§8).
 
 ## I6 — Documentation utilisateur (`README.md`)
 

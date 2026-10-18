@@ -6,25 +6,26 @@
 
 ## État courant
 
-- **CDC v1 figé** le 2026-10-18 (récap §12). **I1 à I4 livrés** ; `all --limit 3` **réel** →
-  4 archives (**151 Mo**) AES-256 envoyées sur `/my-files/databackup` en 35 s, aller-retour
-  déchiffré OK ; **71 tests** verts, `ruff` propre. Prérequis prêts : `proton-drive` 0.9.0,
-  session Proton active, dossier de destination créé.
-- Prochain jalon : **I5 — enchaînement complet, nettoyage et récapitulatif** (cf. `TODO.md`).
+- **CDC v1 figé** le 2026-10-18 (récap §12). **I1 à I5 (code) livrés** : `all` enchaîne
+  scan → archive → transfert → nettoyage, avec **récapitulatif final** et **`backup/` vidé quoi
+  qu'il arrive** ; **74 tests** verts, `ruff` propre. Transfert réel déjà validé (I4) ; **reste
+  le premier run réel complet** (≈ 4,7 Go, à la main).
+- Prérequis prêts : `proton-drive` 0.9.0, session Proton active, dossier `/my-files/databackup`.
+- Prochain jalon : premier run réel complet, puis **I6 — `README.md`**.
 
 ## Décisions actées (détail au CDC §3–§8)
 
 - `source/` **lecture seule** ; un zip **AES-256** par dossier de premier niveau + `documents.zip`
   (racine) ; nommage normalisé, `ZIP_STORED` sur les formats compressés, aucun filtrage ;
-  `backup/` **vidé au début et à la fin de chaque run** (`scan`/`archive` seuls le laissent) —
-  §3, §4, §6.
+  `backup/` **vidé au début et à la fin de chaque run** (`scan`/`archive` seuls le laissent).
 - Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD` ; **en clair au CDC §4**,
   exception assumée §11), jamais journalisé ; destination `/my-files/databackup`
-  (`upload -f replace`), orphelines conservées, échec → **on continue** — §5, §7.
-- **I1–I4** : `exec` + verrou `.databackup.lock` (repris si obsolète) ; `scan` = plan seul
+  (`upload -f replace`), orphelines conservées, échec → **on continue**.
+- **I1–I5** : `exec` + verrou `.databackup.lock` (repris si obsolète) ; `scan` = plan seul
   (**collision → échec** `1`) ; `archive` = vidage avant + sous-dossiers vides conservés ;
   `transfer` = `upload -f replace`, échec **compté**, login + reprise **en TTY seulement**
-  (**code `4`** sinon) ; `--limit N`, `--dry-run`.
+  (**code `4`** sinon) ; `all` = chaîne complète, **vidage final garanti** (succès, échec,
+  annulation) et **récapitulatif** journalisé ; `--limit N`, `--dry-run`.
 
 ## Dette / points d'attention
 
@@ -35,6 +36,6 @@
 
 ## Prochaines actions
 
-- 🔴 **I5 — enchaînement complet** : récapitulatif final, nettoyage garanti même en échec ou
-  annulation ; puis **I6 — `README.md`**.
-- 🟠 **Premier run réel complet** (à la main, sans timeout) pour mesurer `Photos.zip` (~3,2 Go).
+- 🔴 **Premier run réel complet** (à la main, sans timeout) : mesurer la durée, surtout
+  `Photos.zip` (~3,2 Go) ; ajuster ensuite le `timeout` du bouton Piloter (CDC §8).
+- 🔴 **I6 — `README.md`** : installation, `.env`, destination Proton, commandes, codes retour.
