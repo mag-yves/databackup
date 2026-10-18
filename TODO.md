@@ -22,12 +22,15 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 ## I1 — Socle technique
 
 - **Objectif** : squelette exécutable **sans logique métier**.
-- **Livrable** : `start.sh` (venv + lanceur), `pyproject.toml` (ruff/pytest, config projet),
-  `requirements.txt` / `requirements-dev.txt`, module principal, commandes
-  `scan | archive | transfer | cleanup | all`, logging horodaté dans `logs/` (rotation),
-  `--dry-run`.
-- **DoD** : `./start.sh scan` démarre et journalise ; `ruff` et `pytest` passent ; tests du
-  parseur d'arguments et du logger ; `.gitignore` couvre binaire, venv, logs et secrets.
+- **Livrable** : `start.sh` (venv + lanceur, **conforme au contrat Piloter du CDC §8** : sans
+  TTY, codes retour, sortie ligne à ligne, annulable, verrou `.databackup.lock`),
+  `pyproject.toml` (ruff/pytest, config projet), `requirements.txt` / `requirements-dev.txt`,
+  module principal, commandes `scan | archive | transfer | cleanup | all`, logging horodaté
+  dans `logs/` (rotation), `--dry-run`.
+- **DoD** : `./start.sh scan` démarre et journalise ; un second lancement est **refusé par le
+  verrou** (code 5) et `SIGTERM` le libère proprement ; `ruff` et `pytest` passent ; tests du
+  parseur d'arguments, du logger et du verrou ; `.gitignore` couvre binaire, venv, logs et
+  secrets.
 
 ## I2 — Scan des sources
 
@@ -82,6 +85,8 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 
 ## Backlog (hors v1 — ne pas coder sans décision actée au CDC §13)
 
+- **Piloter** (autre dépôt) : adaptateur `piloter/scripts/databackup-start.sh` + bouton
+  déclencheur « Sauvegarde docs » (`confirm: true`, timeout à fixer) — sur demande de Yves ;
 - historique daté côté distant (au lieu du miroir de l'état courant) ;
 - sauvegarde incrémentale (n'envoyer que ce qui a changé) ;
 - notification de fin (mail ou notification bureau) ;

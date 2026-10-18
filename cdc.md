@@ -111,8 +111,11 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
   `./proton-drive filesystem upload -f replace <archive> /my-files/databackup`
 - **`-f replace` = les archives distantes de même nom sont écrasées** par la version locale
   (la version remplacée part dans la corbeille Proton : pas d'historique géré par nous).
-- **Authentification hybride** : ni `login` ni `logout` systématique ; en cas d'échec d'un
-  upload, tentative d'`auth login` (navigateur, interactif) puis reprise de l'upload.
+- **Authentification hybride, mais jamais de `login` en aveugle** : ni `login` ni `logout`
+  systématique. En cas d'échec d'un upload, la tentative d'`auth login` (navigateur,
+  interactif) puis la reprise de l'upload n'ont lieu **que dans un terminal**. En exécution
+  **sans TTY** (Piloter, cron), le script échoue avec le code retour `4` et le message
+  « lancez `./proton-drive auth login` » (cf. §8).
 
 **À trancher**
 
@@ -158,11 +161,52 @@ Points à trancher :
 
 ## 8. Exécution
 
-- v1 **manuelle** : `./start.sh [compress|transfer|cleanup|all]` (défaut `all`), qui crée le
-  venv si besoin puis exécute le script.
-- ⬜ **Verrou anti-concurrence** : deux exécutions simultanées partageraient le même dossier
-  `backup/` et se détruiraient mutuellement — verrou fichier nécessaire ?
+- v1 **manuelle** : `./start.sh [scan|archive|transfer|cleanup|all]` (défaut `all`), qui crée le
+  venv si besoin, installe les dépendances puis exécute le module Python.
+  **Créé en I1** (décision du 2026-10-18 : pas de script non fonctionnel en dépôt avant I1).
+- Étapes sélectionnables comme dans `autobackup` (`scan` / `archive` / `transfer` / `cleanup`
+  séparés), pour pouvoir rejouer une étape sans tout recalculer.
+- ⬜ **Verrou** ⚠️ : deux exécutions simultanées partageraient le dossier `backup/` et se
+  détruiraient mutuellement — décision ci-dessous.
+
+### Contrat de `start.sh` — compatible Piloter
+
+`start.sh` est le **lanceur unique** du projet : usage manuel **et** pilotage par
+l'extension **Piloter** (même approche qu'`autobackup`).
+
+**Décidé**
+
+- **Exécutable**, lancé depuis n'importe quel dossier (`cd` sur le dossier du script),
+  `set -euo pipefail` ; arguments transmis au module.
+- **Fonctionne sans TTY** (Piloter l'appelle avec `</dev/null`) : aucun prompt, aucune
+  attente clavier.
+- **Code retour exploitable** : `0` = succès complet, non nul = échec (Piloter ne distingue
+  que ces deux cas). Codes distincts pour l'usage manuel : `1` échec générique (archivage ou
+  transfert), `2` argument invalide, `3` dossier `backup/` indisponible (disque non monté),
+  `4` authentification Proton requise, `5` sauvegarde déjà en cours (verrou).
+- **Verrou `.databackup.lock`** (PID) : un second lancement est **refusé** avec le code `5`
+  et un message clair. Il sert aussi de **témoin d'activité** (base d'un futur statut Piloter
+  « sauvegarde en cours ») et est retiré en fin de run, y compris après une annulation.
+- **Annulable** : sur `SIGTERM` (timeout Piloter, clic sur la tuile « en cours »), arrêt
+  propre — le processus `proton-drive` en cours est terminé, le verrou est libéré, le code
+  retour est non nul. Aucun processus détaché ne doit survivre.
+- **Sortie ligne par ligne sur la sortie standard** (le journal de Piloter en garde 500
+  lignes) : étapes, compteur `[n/total]`, nom d'archive, taille, durée. **Jamais de secret**
+  dans la sortie (cf. §11).
+- `exec` du module Python pour conserver le **groupe de processus** créé par Piloter
+  (indispensable pour que `timeout` et l'annulation atteignent réellement le traitement).
+
+**Côté Piloter** (autre dépôt, à faire quand tu le demandes)
+
+- Un **adaptateur** `piloter/scripts/databackup-start.sh` qui délègue par `exec` à ce
+  `start.sh` (glue de convention seulement, comme `autobackup-start.sh`).
+- Un bouton **déclencheur** « Sauvegarde docs » : `confirm: true`, `timeout` ⬜ (proposition :
+  **2 h**, la sauvegarde envoyant ~4,8 Go — contre 1 h pour `autobackup`).
+- Optionnel, plus tard : `piloter/scripts/databackup-status.sh` lisant `.databackup.lock`
+  pour afficher « en cours ».
 - ⬜ Planification ultérieure (cron / timer systemd) et fréquence ? *(hors v1)*
+- ⬜ Si planifié un jour : gare au **verrou** et à l'**authentification** (§5) — un run
+  automatique ne peut pas ouvrir de navigateur.
 
 ## 9. Journalisation et restitution
 
@@ -208,26 +252,31 @@ Points à trancher :
   niveau vide (sous-dossiers vides conservés dans les archives) ; **aucun filtrage**
   (temporaires, `.bak`, `*~`, fichiers cachés inclus) ; liens symboliques **ignorés avec
   avertissement** ; `documents.zip` pour les fichiers de la racine.
+- *Exécution et Piloter (2026-10-18)* : `start.sh` = **lanceur unique**, conforme au contrat
+  Piloter (sans TTY, codes retour, sortie ligne à ligne, annulable) et **créé en I1** (§8) ;
+  **verrou `.databackup.lock`** dès la v1 ; **pas de `auth login` sans TTY** → échec avec le
+  code `4` (§5, §8).
 
 **Lot B — transfert et secret**
 
 1. **Archives orphelines** sur Proton : conservées (recommandé) ou supprimées ?
 2. **Mot de passe zip hors du code** : variable d'environnement ou fichier local non
    versionné ? Et où le **sauvegarder** (sans lui, les archives sont irrécupérables) ?
-3. **Verrou anti-concurrence** : nécessaire en v1 ?
-4. **Options de test** : `--limit N` et/ou `--dry-run` ?
-5. **Quota Proton** : contrôle avant transfert, et comportement si insuffisant (≈ 4,8 Go) ?
+3. **Options de test** : `--limit N` et/ou `--dry-run` ?
+4. **Quota Proton** : contrôle avant transfert, et comportement si insuffisant (≈ 4,8 Go) ?
 
 **Lot C — archive et restitution**
 
-6. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
-7. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
+5. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
+6. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
    niveau de compression zip (défaut ?) ?
-8. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ?
-9. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
+7. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ?
+8. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
    et continuer, ou échouer ?
-10. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
-11. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
+9. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
+10. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
+11. **`timeout` du bouton Piloter** (§8) : 2 h proposées pour ~4,8 Go — à confirmer après un
+    premier transfert réel chronométré.
 
 ## 13. Évolutions envisagées (hors v1)
 

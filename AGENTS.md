@@ -29,6 +29,9 @@ aujourd'hui le projet n'a que sa documentation et son outillage de référence.
   dans le code ou un fichier versionné (cf. `cdc.md` §7 et §11).
 - **Aucun écrasement côté distant sans décision explicite** : la stratégie de conflit
   Proton Drive est fixée dans `cdc.md` §5.
+- **`start.sh` doit rester compatible Piloter** : lanceur unique du projet, contrat détaillé
+  au `cdc.md` §8 (sans TTY, codes retour, sortie ligne par ligne, annulable, verrou
+  `.databackup.lock`). Ne pas casser ce contrat sans le réécrire d'abord dans le CDC.
 - La référence de fonctionnement du CLI Proton Drive est `usage-proton-drive-cli.md`.
 
 ## Structure
