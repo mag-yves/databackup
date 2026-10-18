@@ -1,0 +1,40 @@
+# Binaire Proton Drive (téléchargé par install.sh, ~93 Mo)
+proton-drive
+
+# Environnement virtuel
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Logs générés
+logs/
+*.log
+
+# Outils de développement
+.pytest_cache/
+.ruff_cache/
+
+# Configuration locale et secrets (ne jamais versionner)
+.env
+config.local.*
+*.local.json
+
+# Dossier temporaire de travail (archives avant transfert)
+tmp/
+backup/
+
+# Points d'entrée locaux : liens symboliques propres à la machine
+# (motif volontairement sans « / » : un lien symbolique n'est pas un dossier)
+source
+documents
+
+# IDE / éditeur
+.vscode/
+.idea/
+.DS_Store
