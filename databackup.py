@@ -608,27 +608,43 @@ def upload_archive(archive: Path) -> bool:
     return True
 
 
-# --- Étapes -----------------------------------------------------------------
+# --- Récapitulatif et étapes -------------------------------------------------
 
 
-def step_scan(*, limit: int | None = None, dry_run: bool = False) -> int:
+@dataclass
+class RunStats:
+    """Compteurs consolidés d'un run, pour le récapitulatif final (cf. cdc.md §9)."""
+
+    archives_planned: int = 0
+    archives_created: int = 0
+    archive_volume: int = 0
+    archives_sent: int = 0
+    transfer_failures: int = 0
+
+
+def step_scan(*, limit: int | None = None, dry_run: bool = False, stats: RunStats | None = None) -> int:
     """Étape ``scan`` : affiche le plan de sauvegarde, sans rien écrire ni envoyer."""
     try:
         report = plan_archives(limit=limit)
     except ScanError as exc:
         logger.error("%s", exc)
         return EXIT_ERROR
+    if stats is not None:
+        stats.archives_planned = len(report.plans)
     _log_scan(report, dry_run)
     return EXIT_OK
 
 
-def step_archive(*, limit: int | None = None, dry_run: bool = False) -> int:
+def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunStats | None = None) -> int:
     """Étape ``archive`` : crée les zips chiffrés dans ``backup/`` (cf. cdc.md §4)."""
     try:
         report = plan_archives(limit=limit)
     except ScanError as exc:
         logger.error("%s", exc)
         return EXIT_ERROR
+
+    if stats is not None:
+        stats.archives_planned = len(report.plans)
 
     if dry_run:
         logger.info("--dry-run : %d archive(s) seraient créées dans %s.", len(report.plans), BACKUP_DIR)
@@ -651,20 +667,20 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False) -> int:
         logger.info("[%d/%d] %s -> %s ...", index, total, plan.label, plan.archive_name)
         started = time.monotonic()
         try:
-            stats = write_archive(plan, BACKUP_DIR / plan.archive_name, password)
+            archive_stats = write_archive(plan, BACKUP_DIR / plan.archive_name, password)
         except OSError as exc:
             errors += 1
             logger.error("[%d/%d] [ERREUR] %s : %s", index, total, plan.archive_name, exc)
             continue
-        volume += stats.size
+        volume += archive_stats.size
         logger.info(
             "[%d/%d] OK %s (%d fichier(s), %d dossier(s) vide(s), %s, %s)",
             index,
             total,
             plan.archive_name,
-            stats.file_count,
-            stats.empty_dirs,
-            format_size(stats.size),
+            archive_stats.file_count,
+            archive_stats.empty_dirs,
+            format_size(archive_stats.size),
             format_duration(time.monotonic() - started),
         )
 
@@ -675,10 +691,13 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False) -> int:
         format_size(volume),
         errors,
     )
+    if stats is not None:
+        stats.archives_created = total - errors
+        stats.archive_volume = volume
     return EXIT_ERROR if errors else EXIT_OK
 
 
-def step_transfer(*, dry_run: bool = False) -> int:
+def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> int:
     """Étape ``transfer`` : envoie les archives vers Proton Drive (cf. cdc.md §5, §6).
 
     Un échec est **compté** et le run continue ; dans un terminal, une **unique** tentative
@@ -706,6 +725,8 @@ def step_transfer(*, dry_run: bool = False) -> int:
         ok = upload_archive(archive)
 
         if not ok and not is_interactive():
+            if stats is not None:
+                stats.transfer_failures += 1
             logger.error(
                 "Échec hors terminal : `auth login` est impossible. Lancez `./proton-drive auth login` "
                 "dans un terminal, puis relancez.",
@@ -729,6 +750,10 @@ def step_transfer(*, dry_run: bool = False) -> int:
             failures += 1
             logger.error("[%d/%d] ÉCHEC %s — compté, le run continue.", index, total, archive.name)
 
+    if stats is not None:
+        stats.archives_sent = total - failures
+        stats.transfer_failures = failures
+
     if failures:
         logger.error("Transfert terminé : %d/%d archive(s), %d échec(s).", total - failures, total, failures)
         return EXIT_ERROR
@@ -736,15 +761,15 @@ def step_transfer(*, dry_run: bool = False) -> int:
     return EXIT_OK
 
 
-def execute(command: str, *, limit: int | None, dry_run: bool) -> int:
+def execute(command: str, *, limit: int | None, dry_run: bool, stats: RunStats) -> int:
     """Exécute la commande demandée et retourne un code retour.
 
     ``all`` et ``archive`` vident ``backup/`` au début (cf. cdc.md §6, étape 2). Le vidage
     final (``all``, ``cleanup``) est garanti par :func:`main` dans son ``finally``, y compris
-    en cas d'annulation.
+    en cas d'annulation. ``stats`` est alimenté pour le récapitulatif final.
     """
     if command == "scan":
-        return step_scan(limit=limit, dry_run=dry_run)
+        return step_scan(limit=limit, dry_run=dry_run, stats=stats)
     if command == "cleanup":
         return EXIT_OK
 
@@ -753,21 +778,36 @@ def execute(command: str, *, limit: int | None, dry_run: bool) -> int:
         require_backup_dir()
 
     if command == "transfer":
-        return step_transfer(dry_run=dry_run)
+        return step_transfer(dry_run=dry_run, stats=stats)
 
     # archive / all — vidage initial avant tout traitement
     if not dry_run:
         logger.info("Vidage initial de backup/ : %d élément(s) supprimé(s).", empty_backup())
 
     if command == "archive":
-        return step_archive(limit=limit, dry_run=dry_run)
+        return step_archive(limit=limit, dry_run=dry_run, stats=stats)
 
-    return_code = step_scan(limit=limit, dry_run=dry_run)
+    return_code = step_scan(limit=limit, dry_run=dry_run, stats=stats)
     if return_code == EXIT_OK:
-        return_code = step_archive(limit=limit, dry_run=dry_run)
+        return_code = step_archive(limit=limit, dry_run=dry_run, stats=stats)
     if return_code == EXIT_OK:
-        return_code = step_transfer(dry_run=dry_run)
+        return_code = step_transfer(dry_run=dry_run, stats=stats)
     return return_code
+
+
+def _log_summary(stats: RunStats, elapsed: float, return_code: int, *, dry_run: bool) -> None:
+    """Récapitulatif final, affiché et journalisé (cf. cdc.md §9)."""
+    if not dry_run:
+        logger.info("=== Récapitulatif ===")
+        logger.info(
+            "Archives : %d prévue(s), %d créée(s) (%s), %d envoyée(s), %d échec(s) de transfert.",
+            stats.archives_planned,
+            stats.archives_created,
+            format_size(stats.archive_volume),
+            stats.archives_sent,
+            stats.transfer_failures,
+        )
+    logger.info("Durée : %s. Code retour : %d.", format_duration(elapsed), return_code)
 
 
 # --- Ligne de commande ------------------------------------------------------
@@ -831,8 +871,9 @@ def main(argv: list[str] | None = None) -> int:
         return EXIT_LOCKED
 
     started = time.monotonic()
+    stats = RunStats()
     try:
-        return_code = execute(command, limit=args.limit, dry_run=args.dry_run)
+        return_code = execute(command, limit=args.limit, dry_run=args.dry_run, stats=stats)
     except BackupUnavailable as exc:
         logger.error("%s", exc)
         return_code = EXIT_BACKUP
@@ -848,7 +889,7 @@ def main(argv: list[str] | None = None) -> int:
             return_code = EXIT_BACKUP
         release_lock()
 
-    logger.info("Terminé en %s (code %d).", format_duration(time.monotonic() - started), return_code)
+    _log_summary(stats, time.monotonic() - started, return_code, dry_run=args.dry_run)
     return return_code
 
 

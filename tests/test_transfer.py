@@ -1,8 +1,9 @@
-"""Tests de l'étape « transfert » (I4) — cf. ``TODO.md``.
+"""Tests des étapes « transfert » (I4) et « enchaînement complet » (I5) — cf. ``TODO.md``.
 
 Utilise une **doublure** de ``proton-drive`` (petit script Python) : succès, échec compté sans
 interruption, reprise après ``auth login`` en terminal, échec hors terminal (code `4`), binaire
-absent, absence d'archive et ``--dry-run``. Aucun réseau, aucun vrai Proton.
+absent, absence d'archive et ``--dry-run``. Couvre aussi le **nettoyage garanti** de ``backup/``
+(succès, échec de transfert, échec de scan) et le **récapitulatif final**. Aucun réseau.
 """
 
 from __future__ import annotations
@@ -183,3 +184,45 @@ def test_all_uploads_then_cleans_backup(project: Path) -> None:
 
     assert _uploads(project) == ["documents.zip", "photos.zip"]
     assert list((project / "backup").iterdir()) == []  # nettoyage final (cf. cdc.md §6)
+
+
+def test_all_cleans_backup_after_transfer_failure(project: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(databackup, "proton_login", lambda: False)
+    _state(project, "fail_always").touch()
+    (project / "source" / "Photos").mkdir()
+    (project / "source" / "Photos" / "a.jpg").write_bytes(b"AAA")
+
+    assert databackup.main(["all"]) == databackup.EXIT_ERROR
+
+    assert _uploads(project) == []
+    assert list((project / "backup").iterdir()) == []  # aucun résidu malgré l'échec de transfert
+
+
+def test_all_cleans_backup_after_scan_error(project: Path) -> None:
+    source = project / "source"
+    (source / "Photos").mkdir()
+    (source / "Photos" / "a.jpg").write_bytes(b"AAA")
+    (source / "photos").mkdir()
+    (source / "photos" / "b.jpg").write_bytes(b"BBB")  # collision -> échec du scan
+
+    assert databackup.main(["all"]) == databackup.EXIT_ERROR
+
+    assert _uploads(project) == []
+    assert list((project / "backup").iterdir()) == []  # nettoyage garanti même en échec
+
+
+def test_final_summary_is_logged(project: Path) -> None:
+    source = project / "source"
+    (source / "Photos").mkdir()
+    (source / "Photos" / "a.jpg").write_bytes(b"AAA")
+    (source / "racine.odt").write_bytes(b"ODT")
+
+    assert databackup.main(["all"]) == databackup.EXIT_OK
+
+    for handler in databackup.logger.handlers:
+        handler.flush()
+    content = "\n".join(path.read_text(encoding="utf-8") for path in (project / "logs").glob("databackup-*.log"))
+    assert "=== Récapitulatif ===" in content
+    assert "2 prévue(s), 2 créée(s)" in content
+    assert "2 envoyée(s), 0 échec(s) de transfert" in content
+    assert "Code retour : 0" in content

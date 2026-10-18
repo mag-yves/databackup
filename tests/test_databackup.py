@@ -251,7 +251,7 @@ class TestProcessContract:
         runner.write_text(
             "import sys, time\n"
             "import databackup\n"
-            "def slow(*, limit=None, dry_run=False):\n"
+            "def slow(*, limit=None, dry_run=False, stats=None):\n"
             "    time.sleep(60)\n"
             "    return 0\n"
             "databackup.step_scan = slow\n"
