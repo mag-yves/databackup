@@ -15,6 +15,9 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 - **Objectif** : figer le périmètre v1 (sources, format des archives, destination, exécution).
 - **Livrable** : `cdc.md` sans section ⬜ bloquante pour I1–I4.
 - **DoD** : les questions du CDC §12 tranchées ou explicitement reportées en évolution (§13).
+- **Avancement** : **lot A** (contenu des archives) tranché le 2026-10-18 — nommage normalisé,
+  `ZIP_STORED` pour les formats compressés, aucun filtrage, liens symboliques ignorés.
+  Restent les **lots B** (transfert et secret) et **C** (archive et restitution).
 
 ## I1 — Socle technique
 

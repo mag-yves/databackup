@@ -42,10 +42,10 @@ site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
 | Unité sauvegardée | **chaque dossier de premier niveau** = une archive, **récursive** (toute la profondeur : jusqu'à 7 niveaux aujourd'hui) |
 | Fichiers à la racine | regroupés dans **`documents.zip`** |
 | Sous-dossier d'un dossier | inclus dans l'archive du dossier parent (pas d'archive par sous-dossier) |
-| Dossiers vides | ⬜ ignorés (aucune archive) ? *(2 dossiers vides détectés aujourd'hui)* |
-| Liens symboliques internes | ⬜ suivis ou ignorés ? *(aucun détecté au premier niveau aujourd'hui)* |
-| Fichiers temporaires | ⬜ inclus ou exclus ? *(ex. `Compta Homebank.xhb~`)* |
-| Fichiers cachés (`.…`) | ⬜ inclus ou exclus ? *(aucun aujourd'hui à la racine)* |
+| Dossiers vides | **pas d'archive** pour un dossier de premier niveau vide ; **dans** une archive, les sous-dossiers vides sont **conservés** (arborescence fidèle). *(les 2 dossiers vides relevés sont imbriqués, aucun au premier niveau)* |
+| Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine `source/` est elle-même un lien, résolu une fois ; aucun lien interne aujourd'hui)* |
+| Fichiers temporaires | **inclus** : le script **ne filtre rien** (y compris `Compta Homebank.xhb~` et les `.bak` datés) |
+| Fichiers cachés (`.…`) | **inclus** *(aucun aujourd'hui à la racine)* |
 | Fichiers modifiés pendant l'exécution | ⬜ la source est **synchronisée par kDrive** : un fichier peut changer pendant l'archivage — avertir et continuer, ou échouer ? |
 
 **Volumétrie relevée le 2026-10-18** (indicative, pour dimensionner les transferts) :
@@ -66,20 +66,39 @@ Extension dominantes : `jpg` (853), `stl` (285), `pdf` (266), `gif` (242), `3mf`
 
 - Format : **zip chiffré AES-256** (`pyzipper`, comme le projet `autobackup`).
 - Mot de passe : **`proton@zip@protected`**, unique et commun aux archives.
-- Une archive par dossier de premier niveau ; `documents.zip` pour les fichiers racine.
+- Une archive par dossier de premier niveau ; **`documents.zip`** pour les fichiers de la racine.
 - Écrasement côté Proton (miroir de l'état courant, cf. §5).
+- **Aucun filtrage** : le script n'exclut ni temporaires, ni `.bak`, ni fichiers cachés (§3).
 
-**À trancher**
+### Nommage normalisé
 
-- ⬜ **Nommage** : `<nom du dossier>.zip` à l'identique ? Attention aux noms contenant
-  espaces et caractères spéciaux (`Complotiste !`, `Garanties - modes d'emploi`,
-  `Skills et modèles IA`). Préfixe commun pour les repérer sur Proton ?
-- ⬜ **Fichiers déjà compressés** (`jpg`, `gif`, `png`, `mp4`, `stl`, `3mf`, `zip`…) stockés
-  **sans compression** (`ZIP_STORED`) mais chiffrés, comme `autobackup` ? L'enjeu est réel :
-  `Photos` (3,2 Go de `jpg`) et `Prusa` (628 Mo de `stl`/`3mf`) gagneraient peu à être
-  recompressés, mais coûtent du temps CPU.
-- ⬜ **Dossier vide rencontré dans une archive** : conservé ou omis ?
-- ⬜ Compression zip : niveau par défaut ?
+Le nom du dossier est **normalisé** pour produire le nom de l'archive :
+
+1. accents supprimés (normalisation Unicode NFKD) ;
+2. passage en **minuscules** ;
+3. tout groupe de caractères hors `a-z0-9` remplacé par un **tiret** (tirets de bord retirés) ;
+4. suffixe **`.zip`**.
+
+Exemples actuels : `Skills et modèles IA` → `skills-et-modeles-ia.zip` · `Garanties - modes
+d'emploi` → `garanties-modes-d-emploi.zip` · `Complotiste !` → `complotiste.zip` ·
+`Places de camp` → `places-de-camp.zip`. Appliqué aux 21 dossiers actuels : **aucune
+collision**. Les fichiers de la racine vont dans `documents.zip`.
+
+- ⬜ **Collision** si deux dossiers normalisés donnaient le même nom : échec explicite du scan
+  (recommandé — pas d'écrasement silencieux) ou suffixe numéroté ?
+- ⬜ Un dossier nommé `Documents` produirait `documents.zip`, même nom que le zip des fichiers
+  racine : même règle de collision à appliquer.
+
+### Compression
+
+- **ZIP_STORED** (aucune compression, mais **toujours chiffrés** AES-256) pour les formats
+  déjà compressés : `jpg`, `jpeg`, `png`, `gif`, `mp4`, `stl`, `3mf`, `zip`. C'est l'essentiel
+  du volume (≈ 4,2 Go sur 4,8 : `Photos` 3,2 Go de `jpg`, `Prusa` 628 Mo de `stl`/`3mf`) : le
+  gain de compression y est négligeable, le coût CPU réel.
+- **ZIP_DEFLATED** pour tout le reste (`pdf`, `odt`, `txt`, `f3d`, `dwg`, `sh`…).
+- ⬜ Faut-il ajouter à la liste les formats **conteneurs zip** (`odt`, `ods`, `docx`, `pptx`,
+  `xlsx`) ? Le gain y est faible mais ces fichiers sont petits.
+- ⬜ Niveau de compression zip : laisser le défaut ?
 
 ## 5. Destination et transfert (Proton Drive)
 
@@ -179,25 +198,36 @@ Points à trancher :
 
 ## 12. Questions ouvertes
 
-Décisions déjà prises avec Yves : racine `source` en lecture seule (§3) ; dossier temporaire
-`backup` (§6) ; un zip par dossier de premier niveau + `documents.zip` (§3) ; chiffrement
-AES-256 avec le mot de passe d'`autobackup` (§4) ; **écrasement** des fichiers existants sur
-Proton (§5).
+**Déjà tranché**
 
-Restent à trancher :
+- *Socle* : racine `source` en **lecture seule** (§3) ; dossier temporaire `backup` (§6) ; un
+  zip par dossier de premier niveau + `documents.zip` (§3) ; chiffrement **AES-256** avec le
+  mot de passe d'`autobackup` (§4) ; **écrasement** des fichiers existants sur Proton (§5).
+- *Lot A — contenu des archives (2026-10-18)* : **nommage normalisé** (§4) ; `ZIP_STORED`
+  pour `jpg/jpeg/png/gif/mp4/stl/3mf/zip` ; **pas d'archive** pour un dossier de premier
+  niveau vide (sous-dossiers vides conservés dans les archives) ; **aucun filtrage**
+  (temporaires, `.bak`, `*~`, fichiers cachés inclus) ; liens symboliques **ignorés avec
+  avertissement** ; `documents.zip` pour les fichiers de la racine.
 
-1. **Nommage des archives** (espaces et caractères spéciaux conservés ? préfixe ?).
-2. **Fichiers déjà compressés** stockés sans compression (`ZIP_STORED`) ou non.
-3. **Dossiers vides** : ignorés (aucune archive) ou représentés ?
-4. **Fichiers temporaires** (`.xhb~`) et **fichiers cachés** : inclus ou exclus ?
-5. **Liens symboliques** rencontrés dans l'arborescence : suivis ou ignorés ?
-6. **Archives orphelines** sur Proton : conservées (recommandé) ou supprimées ?
-7. **Mot de passe zip hors du code** : variable d'environnement ou fichier local non versionné ?
-8. **Verrou anti-concurrence** : nécessaire en v1 ?
-9. **Options de test** : `--limit N` et/ou `--dry-run` ?
-10. **Quota Proton** : contrôle avant transfert, et comportement si insuffisant ?
-11. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
-12. **Planification** automatique : prévue pour plus tard, ou jamais (exécution manuelle assumée) ?
+**Lot B — transfert et secret**
+
+1. **Archives orphelines** sur Proton : conservées (recommandé) ou supprimées ?
+2. **Mot de passe zip hors du code** : variable d'environnement ou fichier local non
+   versionné ? Et où le **sauvegarder** (sans lui, les archives sont irrécupérables) ?
+3. **Verrou anti-concurrence** : nécessaire en v1 ?
+4. **Options de test** : `--limit N` et/ou `--dry-run` ?
+5. **Quota Proton** : contrôle avant transfert, et comportement si insuffisant (≈ 4,8 Go) ?
+
+**Lot C — archive et restitution**
+
+6. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
+7. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
+   niveau de compression zip (défaut ?) ?
+8. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ?
+9. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
+   et continuer, ou échouer ?
+10. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
+11. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
 
 ## 13. Évolutions envisagées (hors v1)
 

@@ -9,8 +9,9 @@
 
 - Projet **initialisé** le 2026-10-18 : structure documentaire, suivi du temps, `install.sh` et
   `usage-proton-drive-cli.md` repris d'`autobackup`. **Aucun code applicatif.**
-- Phase : **analyse** — `cdc.md` rédigé (v1) ; les **12 questions du §12** restent à trancher
-  avant de coder. Dépôt : `git@github.com:mag-yves/databackup.git`, branche `main`.
+- Phase : **analyse** — `cdc.md` en cours de rédaction : **lot A** (contenu des archives :
+  nommage normalisé, `ZIP_STORED`, aucun filtrage, liens ignorés) tranché le 2026-10-18 ;
+  restent les **lots B et C** (§12). Dépôt : `git@github.com:mag-yves/databackup.git`, `main`.
 
 ## Décisions actées
 
@@ -31,8 +32,8 @@
 
 ## Prochaines actions
 
-- 🔴 Trancher les questions du `cdc.md` §12 — priorité : nommage des archives, `ZIP_STORED`
-  pour les fichiers déjà compressés, dossiers vides, fichiers temporaires et cachés.
+- 🔴 Traiter les **lots B et C** du `cdc.md` §12 : transfert et secret (orphelins, mot de
+  passe hors du code, verrou, options de test, quota) puis archive et restitution.
 - 🔴 Sortir le **mot de passe zip du code** (env var ou fichier local non versionné) et le
   sauvegarder hors projet.
 - 🟠 Démarrer I1 (socle technique) une fois le CDC v1 figé.
