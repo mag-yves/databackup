@@ -20,6 +20,9 @@ logs/
 .pytest_cache/
 .ruff_cache/
 
+# Verrou d'exécution (PID de la sauvegarde en cours)
+.databackup.lock
+
 # Configuration locale et secrets (ne jamais versionner)
 .env
 config.local.*
