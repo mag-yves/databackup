@@ -15,15 +15,15 @@
 
 ## Décisions actées
 
-- `source/` → `/home/yves/kDrive/Personnel`, **lecture seule absolue** (21 dossiers de premier
-  niveau, 2 315 fichiers, ≈ 4,8 Go au 2026-10-18) ; `backup/` → `/media/yves/SSDBCK/temp/backup`.
-- **Un zip par dossier de premier niveau** (récursif) ; fichiers posés à la racine →
-  **`documents.zip`**.
-- Chiffrement **AES-256**, mot de passe `proton@zip@protected` (commun avec `autobackup`).
-- Destination **`/my-files/databackup`**, `upload -f replace` : **écrasement** des archives
-  distantes (état courant seul, pas d'historique).
-- `proton-drive` téléchargé dans le projet par `./install.sh`, non versionné.
-- Itérations : `TODO.md` — I1 socle technique → I6 restauration ; I0 = analyse/CDC.
+- `source/` → `/home/yves/kDrive/Personnel`, **lecture seule absolue** ; `backup/` →
+  `/media/yves/SSDBCK/temp/backup` (temporaire, vidé avant et après).
+- **Un zip par dossier de premier niveau** (récursif) ; fichiers racine → **`documents.zip`**.
+- Chiffrement **AES-256**, mot de passe `proton@zip@protected`.
+- Destination **`/my-files/databackup`**, `upload -f replace` (**écrasement**, pas d'historique).
+- Lot A (contenu des archives) : nommage **normalisé**, `ZIP_STORED` pour les formats déjà
+  compressés, **aucun filtrage**, liens symboliques ignorés — détail : `cdc.md` §4.
+- `proton-drive` installé par `./install.sh`, non versionné.
+- Itérations : `TODO.md` — I1 socle → I6 restauration ; I0 = analyse/CDC.
 
 ## Dette / points d'attention
 
