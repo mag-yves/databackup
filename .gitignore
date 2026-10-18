@@ -27,7 +27,7 @@ config.local.*
 
 # Dossier temporaire de travail (archives avant transfert)
 tmp/
-backup/
+backup
 
 # Points d'entrée locaux : liens symboliques propres à la machine
 # (motif volontairement sans « / » : un lien symbolique n'est pas un dossier)
