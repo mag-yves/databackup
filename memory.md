@@ -7,23 +7,24 @@
 ## État courant
 
 - Projet **initialisé** le 2026-10-18 (documents, suivi du temps, `install.sh` repris
-  d'`autobackup`) ; **aucun code** : le CDC est en cours de rédaction.
-- Phase **analyse** : socle, **lots A et B** et contrat `start.sh`/Piloter tranchés ; reste le
-  **lot C** (`cdc.md` §12). Dépôt `git@github.com:mag-yves/databackup.git`, branche `main`.
+  d'`autobackup`) ; **CDC v1 figé** — lots A, B et C tranchés (récap au §12 du CDC).
+- **Aucun code** : la prochaine étape est **I1** (socle technique + `start.sh`).
+  Dépôt `git@github.com:mag-yves/databackup.git`, branche `main`.
 
 ## Décisions actées
 
-- `source/` → `/home/yves/kDrive/Personnel`, **lecture seule absolue** ; `backup/` →
+- `source/` → `/home/yves/kDrive/Personnel`, **lecture seule** ; `backup/` →
   `/media/yves/SSDBCK/temp/backup` (temporaire, vidé avant et après).
 - **Un zip par dossier de premier niveau** ; fichiers racine → **`documents.zip`** ; **AES-256**,
-  nommage **normalisé**, `ZIP_STORED` pour les formats compressés, **aucun filtrage**, liens
-  symboliques ignorés (détail : §3 et §4 du CDC).
-- Mot de passe : **`.env` local non versionné** (priorité à `DATABACKUP_ZIP_PASSWORD`), déjà
-  dans le gestionnaire de mots de passe ; `proton-drive` via `./install.sh`.
+  nommage **normalisé** (collision = échec du scan), `ZIP_STORED` pour les formats compressés,
+  **aucun filtrage**, liens symboliques ignorés (détail : §3 et §4 du CDC).
+- Mot de passe dans **`.env` local non versionné** (priorité à `DATABACKUP_ZIP_PASSWORD`) ;
+  `proton-drive` installé par `./install.sh`.
 - Destination **`/my-files/databackup`**, `upload -f replace` (**écrasement**) ; orphelines
-  **conservées** (rien n'est supprimé côté Proton) ; **aucun contrôle de quota** (CLI muet).
+  **conservées** ; **pas de contrôle de quota** (CLI muet) ; upload en échec → **on continue**.
 - `start.sh` (I1) : lanceur **unique** compatible Piloter (sans TTY, codes retour, annulable),
   **verrou `.databackup.lock`**, `--dry-run` / `--limit N`, **pas de `auth login` sans TTY**.
+- **Hors v1** : restauration reportée (risque assumé, §10) ; **planification exclue** (définitif).
 
 ## Dette / points d'attention
 
@@ -32,7 +33,6 @@
 
 ## Prochaines actions
 
-- 🔴 Traiter le **lot C** du `cdc.md` §12 : collision de noms, `ZIP_STORED` étendu, reprise après
-  échec, vérification post-transfert, kDrive, gros fichier, restauration, planification.
-- 🟠 I1 (socle technique) une fois le CDC v1 figé : `start.sh` conforme au §8 (verrou, codes
-  retour, `--dry-run` / `--limit N`, mot de passe lu dans `.env`).
+- 🔴 **I1 — socle technique** : `start.sh` conforme au §8 (verrou, codes retour, `--dry-run` /
+  `--limit N`, mot de passe lu dans `.env`), `pyproject.toml`, module principal + logging.
+- 🟠 Le premier run réel complet (I5) mesurera la durée et validera `Photos.zip` (~3,2 Go).

@@ -1,8 +1,7 @@
 # TODO — DataBackup
 
-État courant : **phase d'analyse**. Le projet est initialisé (structure documentaire, suivi
-du temps, `install.sh` + référence du CLI Proton Drive) ; **aucun code** n'est encore écrit.
-Le périmètre fonctionnel est en cours de rédaction dans `cdc.md` (sections ⬜ et §12).
+État courant : **CDC v1 figé** le 2026-10-18 (les trois lots de décisions sont tranchés, récap
+au `cdc.md` §12) ; **aucun code** n'est encore écrit. La prochaine étape est **I1**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -10,14 +9,14 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 
 ---
 
-## I0 — Analyse et CDC ⏳ **en cours**
+## I0 — Analyse et CDC ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : figer le périmètre v1 (sources, format des archives, destination, exécution).
-- **Livrable** : `cdc.md` sans section ⬜ bloquante pour I1–I4.
-- **DoD** : les questions du CDC §12 tranchées ou explicitement reportées en évolution (§13).
-- **Avancement** : **lot A** (contenu des archives) tranché le 2026-10-18 — nommage normalisé,
-  `ZIP_STORED` pour les formats compressés, aucun filtrage, liens symboliques ignorés.
-  Restent les **lots B** (transfert et secret) et **C** (archive et restitution).
+- **Livrable** : `cdc.md` complet — décisions récapitulées au §12.
+- **Résultat** : lots **A** (contenu des archives), **B** (transfert et secret) et **C**
+  (échecs, restitution, planification) tranchés ; **restauration reportée hors v1** (§10) et
+  **planification définitivement exclue** (§2, §8). Reste une vérification (non bloquante) :
+  le premier run réel complet, pour mesurer la durée.
 
 ## I1 — Socle technique
 
@@ -54,45 +53,45 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 ## I4 — Transfert vers Proton Drive
 
 - **Objectif** : envoyer les archives vers `/my-files/databackup`.
-- **Livrable** : étape `transfer` : un `upload` par archive, stratégie de conflit actée,
-  reprise après `auth login` en cas d'échec, comptage et journalisation des échecs.
-- **DoD** : tests avec une **doublure** de `proton-drive` (succès, échec, retry après login,
-  binaire absent) ; puis un **transfert réel** de bout en bout avec une petite archive non
-  critique.
+- **Livrable** : étape `transfer` : un `upload` par archive (`-f replace`), reprise après
+  `auth login` **uniquement dans un terminal** (code `4` sans TTY), **échec compté sans
+  interrompre le run**, récapitulatif des échecs.
+- **DoD** : tests avec une **doublure** de `proton-drive` (succès, échec compté et run qui
+  continue, retry après login en TTY, échec sans TTY avec le code `4`, binaire absent) ; puis
+  un **transfert réel** avec `--limit N` sur quelques dossiers non critiques.
 
-## I5 — Enchaînement complet, nettoyage et restitution
+## I5 — Enchaînement complet, nettoyage et récapitulatif
 
 - **Objectif** : une exécution complète fiable, du scan au nettoyage.
 - **Livrable** : commande `all` par défaut (scan → archive → transfer → cleanup), nettoyage
-  garanti **même en cas d'échec**, code de sortie fiable (0/1), récapitulatif final affiché
-  et journalisé.
-- **DoD** : test d'un run complet sur données factices ; aucun résidu dans le dossier
-  temporaire après un échec de transfert simulé.
+  garanti **même en cas d'échec**, code de sortie fiable (`0` / `1`), récapitulatif final
+  affiché et journalisé (archives, volume, échecs).
+- **DoD** : test d'un run complet sur données factices ; aucun résidu dans `backup/` après un
+  échec de transfert simulé ; puis **premier run réel complet lancé à la main** (terminal, sans
+  timeout) pour mesurer la durée — en particulier l'upload de `Photos.zip` (~3,2 Go) — et
+  ajuster le `timeout` du bouton Piloter si besoin.
 
-## I6 — Restauration et documentation utilisateur
+## I6 — Documentation utilisateur (`README.md`)
 
-- **Objectif** : pouvoir relire ses documents depuis Proton Drive.
-- **Livrable** : procédure de restauration écrite (`cdc.md` §10 + `README.md`) et **testée**.
-- **DoD** : un document restauré est **identique à l'original** (comparaison d'empreinte) ;
-  la procédure est rejouable par quelqu'un qui n'a pas écrit le script.
-
-## I7 — Planification *(optionnel, à décider au CDC §8)*
-
-- **Objectif** : exécuter la sauvegarde sans intervention.
-- **Livrable** : tâche planifiée (cron ou timer systemd) + documentation dans `README.md`.
-- **DoD** : deux exécutions planifiées réussies ; comportement vérifié si une exécution
-  précédente tourne encore (verrou).
+- **Objectif** : quelqu'un qui découvre le dossier peut installer et lancer la sauvegarde.
+- **Livrable** : `README.md` — prérequis, `./install.sh`, création de `.env` (mot de passe),
+  création de la destination Proton, commandes et options, codes retour, emplacement des logs,
+  usage manuel **et** via Piloter.
+- **DoD** : les commandes du README sont rejouables telles quelles ; il renvoie au `cdc.md` §10
+  pour la restauration (**hors v1**).
 
 ---
 
 ## Backlog (hors v1 — ne pas coder sans décision actée au CDC §13)
 
 - **Piloter** (autre dépôt) : adaptateur `piloter/scripts/databackup-start.sh` + bouton
-  déclencheur « Sauvegarde docs » (`confirm: true`, timeout à fixer) — sur demande de Yves ;
+  déclencheur « Sauvegarde docs » (`confirm: true`, `timeout: 3600`) — sur demande de Yves ;
+- **restauration** (hors v1, cf. `cdc.md` §10 et §13) : écrire la procédure, la **tester
+  réellement depuis Proton Drive** (téléchargement + déchiffrement), puis éventuellement une
+  commande `./start.sh restore` ;
 - historique daté côté distant (au lieu du miroir de l'état courant) ;
 - sauvegarde incrémentale (n'envoyer que ce qui a changé) ;
 - notification de fin (mail ou notification bureau) ;
-- commande de restauration outillée (`./start.sh restore`) ;
 - autres sources : photos, dépôts Git, bases de données ;
 - contrôle d'intégrité périodique des archives distantes ;
 - interface de suivi (dernières sauvegardes, volumétrie).

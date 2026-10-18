@@ -1,8 +1,9 @@
 # Cahier des charges — DataBackup
 
 > **Source de vérité du projet.** Toute évolution fonctionnelle est écrite et validée ici
-> **avant** d'être codée. Les points marqués ⬜ restent à trancher. Les décisions actées sont
-> en gras dans les sections concernées ; les questions encore ouvertes sont regroupées au §12.
+> **avant** d'être codée. Les décisions actées sont en gras dans les sections concernées et
+> récapitulées au §12 ; les rares ⬜ qui subsistent sont des **vérifications à faire en réel**,
+> pas des questions ouvertes.
 > Règles de travail : `AGENTS.md` — itérations prévues : `TODO.md`.
 
 ## 1. Objectif
@@ -28,9 +29,10 @@ site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
 
 - historique **daté** côté distant (on écrase : un seul état courant) ;
 - sauvegarde **incrémentale** (on refait tous les zips à chaque exécution) ;
-- **suppression** côté Proton d'archives dont le dossier source a disparu ⬜ (cf. §5) ;
-- restauration **outillée** (v1 : procédure documentée, cf. §10) ;
-- planification automatique (cron / systemd) ;
+- **suppression** côté Proton (les archives orphelines sont conservées, cf. §5) ;
+- **restauration** : aucune procédure ni outil en v1 (reportée après la v1, cf. §10) ;
+- **planification automatique** : décision **définitive** — cron / timer systemd sont exclus,
+  la sauvegarde est toujours déclenchée à la main (§8) ;
 - autres sources (photos hors `source`, dépôts Git, bases de données).
 
 ## 3. Sources — quels dossiers ?
@@ -46,7 +48,7 @@ site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
 | Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine `source/` est elle-même un lien, résolu une fois ; aucun lien interne aujourd'hui)* |
 | Fichiers temporaires | **inclus** : le script **ne filtre rien** (y compris `Compta Homebank.xhb~` et les `.bak` datés) |
 | Fichiers cachés (`.…`) | **inclus** *(aucun aujourd'hui à la racine)* |
-| Fichiers modifiés pendant l'exécution | ⬜ la source est **synchronisée par kDrive** : un fichier peut changer pendant l'archivage — avertir et continuer, ou échouer ? |
+| Fichiers modifiés pendant l'exécution | **avertir et continuer** : le zip contient la version lue au moment de l'archivage ; un fichier disparu ou illisible est **signalé dans le log** et n'interrompt pas le dossier (il sera repris au run suivant) |
 
 **Volumétrie relevée le 2026-10-18** (indicative, pour dimensionner les transferts) :
 21 dossiers de premier niveau + 8 fichiers à la racine, **2 315 fichiers**, **≈ 4,8 Go**.
@@ -84,10 +86,10 @@ d'emploi` → `garanties-modes-d-emploi.zip` · `Complotiste !` → `complotiste
 `Places de camp` → `places-de-camp.zip`. Appliqué aux 21 dossiers actuels : **aucune
 collision**. Les fichiers de la racine vont dans `documents.zip`.
 
-- ⬜ **Collision** si deux dossiers normalisés donnaient le même nom : échec explicite du scan
-  (recommandé — pas d'écrasement silencieux) ou suffixe numéroté ?
-- ⬜ Un dossier nommé `Documents` produirait `documents.zip`, même nom que le zip des fichiers
-  racine : même règle de collision à appliquer.
+- **Collision = échec du scan** *(décidé le 2026-10-18)* : si deux dossiers se normalisent vers
+  le même nom, ou si un dossier produisait `documents.zip` (un dossier nommé `Documents`), le
+  scan **s'arrête** avec un message nommant les dossiers en conflit — jamais d'écrasement
+  silencieux côté Proton.
 
 ### Compression
 
@@ -96,9 +98,11 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
   du volume (≈ 4,2 Go sur 4,8 : `Photos` 3,2 Go de `jpg`, `Prusa` 628 Mo de `stl`/`3mf`) : le
   gain de compression y est négligeable, le coût CPU réel.
 - **ZIP_DEFLATED** pour tout le reste (`pdf`, `odt`, `txt`, `f3d`, `dwg`, `sh`…).
-- ⬜ Faut-il ajouter à la liste les formats **conteneurs zip** (`odt`, `ods`, `docx`, `pptx`,
-  `xlsx`) ? Le gain y est faible mais ces fichiers sont petits.
-- ⬜ Niveau de compression zip : laisser le défaut ?
+- **Liste figée** *(décidé le 2026-10-18)* : elle reste celle ci-dessus. Les formats conteneurs
+  zip (`odt`, `ods`, `docx`, `pptx`, `xlsx`) sont **compressés normalement** : fichiers petits,
+  aucun enjeu, pas de règle supplémentaire à maintenir.
+- **Niveau de compression** : celui **par défaut** de la bibliothèque pour les fichiers
+  compressés.
 
 ## 5. Destination et transfert (Proton Drive)
 
@@ -125,12 +129,14 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
   **échec d'upload** : message clair, compté en échec, code retour `1`. Vérification manuelle
   recommandée dans l'interface web Proton avant la première grosse sauvegarde (≈ 4,8 Go).
 
-**À trancher** (voir §12, lot C)
+**Échecs et validation** *(décidé le 2026-10-18 — détail au §6)*
 
-- ⬜ **Gros fichier** : `Photos.zip` ≈ 3,2 Go en un seul upload — à valider sur un transfert
-  réel (durée, robustesse).
-- ⬜ **Coupure réseau en cours de transfert** : reprise, marquage, ou échec complet ?
-- ⬜ **Vérification post-transfert** (taille et/ou empreinte comparées) ?
+- **Coupure réseau** en cours de transfert : l'archive est **comptée en échec** et le run
+  **continue** ; on relance à la main plus tard (tout est alors recompressé, §6).
+- **Aucune vérification post-transfert** : le code retour de `proton-drive` fait foi.
+- ⬜ **Gros fichier** : `Photos.zip` ≈ 3,2 Go en un seul upload — **à valider lors du premier
+  run réel**, lancé à la main dans un terminal (le `timeout` Piloter de 1 h peut être dépassé
+  à froid, cf. §8).
 
 ## 6. Processus (déroulé d'une exécution)
 
@@ -138,24 +144,34 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
    explicite (`backup/` → `/media/yves/SSDBCK/temp/backup`).
 2. **Nettoyage** — `backup/` est **vidé** avant toute chose (il est temporaire).
 3. **Scan** — dossiers de premier niveau de `source/` retenus + fichiers racine ; les
-   dossiers vides sont écartés ⬜.
+   dossiers vides sont écartés ; toute **collision de noms d'archives** arrête le scan (§4).
 4. **Archives** — création des zips chiffrés dans `backup/`.
 5. **Transfert** — envoi des zips de `backup/` vers `/my-files/databackup`, un `upload` par
    zip.
 6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive**, même en cas d'échec.
 
-Points à trancher :
+### Gestion des échecs *(décidé le 2026-10-18)*
 
-- ⬜ Espace requis : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au
-  2026-10-18 : OK, mais garde-fou à prévoir ?).
-- ⬜ **Reprise** après échec : relancer repart de zéro (tout recompresser) — acceptable ?
-- ⬜ Options de test : `--limit N` (limiter aux N premiers dossiers) et/ou `--dry-run`
-  (tout calculer sans rien envoyer) ?
+- Un `upload` en échec (coupure réseau, quota, session Proton expirée) est **compté en échec
+  et le run continue** avec les archives suivantes ; le récapitulatif final les liste et le
+  code retour est `1` (§8). Aucun réessai automatique.
+- **Aucune vérification supplémentaire** après transfert : le **code retour** de
+  `proton-drive` fait foi (pas d'appel `filesystem size`, pas de comparaison d'empreinte).
+- Un fichier qui **disparaît ou devient illisible** pendant l'archivage → **avertissement
+  dans le log et on continue** (il sera repris au run suivant) ; le dossier n'échoue pas.
+- **Relancer repart de zéro** : tout est recompressé (aucun état persisté entre deux
+  exécutions). Accepté en v1 — le coût est la lecture de ~4,8 Go.
+- Espace disque : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au 2026-10-18) —
+  aucun garde-fou dédié, l'échec d'écriture restant un échec explicite.
+
+⬜ **Première validation réelle** (I4/I5) : transférer les archives d'un run complet et
+mesurer la durée, en particulier celle de `Photos.zip` (≈ 3,2 Go, un seul upload).
 
 ## 7. Configuration
 
 - Les chemins machine sont portés par des **symlinks non versionnés** (`source/`, `backup/`),
-  comme dans `autobackup` ⬜ (alternative : variables d'environnement).
+  comme dans `autobackup` — décision conservée : ils fonctionnent et restent propres à la
+  machine (les alternatives par variables d'environnement n'apportent rien ici).
 - Destination Proton : `/my-files/databackup` (constante de projet, pas un secret).
 - **Mot de passe des archives : hors du code** *(décidé le 2026-10-18)*. `autobackup` le
   garde en dur (dette connue, à ne pas reproduire ici).
@@ -178,8 +194,6 @@ Points à trancher :
   (dossiers retenus, noms d'archives normalisés, tailles estimées, cible) **sans rien écrire
   ni envoyer** ; `--limit N` — ne traiter que les **N premiers dossiers**, pour tester un
   transfert réel sans envoyer 4,8 Go. Les deux sont transmis au module par `start.sh`.
-- ⬜ **Verrou** ⚠️ : deux exécutions simultanées partageraient le dossier `backup/` et se
-  détruiraient mutuellement — décision ci-dessous.
 
 ### Contrat de `start.sh` — compatible Piloter
 
@@ -212,33 +226,47 @@ l'extension **Piloter** (même approche qu'`autobackup`).
 
 - Un **adaptateur** `piloter/scripts/databackup-start.sh` qui délègue par `exec` à ce
   `start.sh` (glue de convention seulement, comme `autobackup-start.sh`).
-- Un bouton **déclencheur** « Sauvegarde docs » : `confirm: true`, `timeout` ⬜ (proposition :
-  **2 h**, la sauvegarde envoyant ~4,8 Go — contre 1 h pour `autobackup`).
+- Un bouton **déclencheur** « Sauvegarde docs » : `confirm: true`, **`timeout: 3600` (1 h)**
+  *(décidé le 2026-10-18, comme `autobackup`)*. ⚠️ Un premier run **à froid** peut dépasser
+  l'heure (≈ 4,8 Go à envoyer, dont une archive de 3,2 Go) : le **premier run réel sera lancé
+  à la main, dans un terminal** (aucun timeout), pour mesurer la durée réelle ; le `timeout`
+  du bouton sera ajusté ensuite si nécessaire. Un run coupé par le `timeout` n'est pas perdu :
+  arrêt propre, verrou libéré, `backup/` vidé, il suffit de relancer.
 - Optionnel, plus tard : `piloter/scripts/databackup-status.sh` lisant `.databackup.lock`
   pour afficher « en cours ».
-- ⬜ Planification ultérieure (cron / timer systemd) et fréquence ? *(hors v1)*
-- ⬜ Si planifié un jour : gare au **verrou** et à l'**authentification** (§5) — un run
-  automatique ne peut pas ouvrir de navigateur.
+- **Aucune planification** *(décision définitive du 2026-10-18)* : ni cron, ni timer systemd.
+  Le déclenchement est **toujours manuel** (bouton Piloter ou `./start.sh`) — l'authentification
+  Proton (§5) et le verrou restent ainsi sous contrôle humain, et un run ne tombe jamais quand
+  le portable est fermé.
 
 ## 9. Journalisation et restitution
 
 - Un fichier de log **horodaté par exécution** dans `logs/`, rotation : les **7 derniers**.
 - Avancement affiché **en direct** : étape et compteur `[n/total]`, dossier ou archive en
   cours, taille, durée écoulée.
-- ⬜ **Récapitulatif final** : nombre d'archives, volume total, erreurs ?
-- ⬜ Niveau de détail : les noms d'archives (= noms de dossiers) apparaissent-ils dans les
-  logs ? (machine personnelle : a priori oui, cf. §11)
+- **Récapitulatif final** *(décidé le 2026-10-18)* : nombre d'archives, volume total, durée et
+  échecs — affiché et journalisé à la fin du run (livrable d'I5).
+- **Noms d'archives visibles** dans le log et le terminal, pour rendre le diagnostic possible
+  (cf. §11).
 
 ## 10. Restauration
 
-- Les archives sont chiffrées en **AES-256** : elles s'ouvrent avec **7-Zip** (ou `pyzipper`).
-- Procédure v1 (documentée, non outillée) :
-  1. `./proton-drive filesystem download /my-files/databackup/<archive>.zip .`
-  2. ouvrir l'archive avec le mot de passe du §4 ;
-  3. extraire à l'emplacement voulu.
-- ⬜ **Test de restauration réel** à prévoir (règle : une sauvegarde non testée n'est pas une
-  sauvegarde).
-- ⚠️ Les dossiers vides n'existent pas dans les archives : leur structure n'est pas restituée.
+**Hors v1** *(décidé le 2026-10-18)* : la v1 ne livre **ni procédure ni outil** de
+restauration. Les archives sont des **zip AES-256 standard**, ouvrables avec **7-Zip** (ou
+`pyzipper`) avec le mot de passe du §4 : la restitution reste possible à tout moment, mais
+elle sera documentée et testée après la v1 (§13).
+
+⚠️ **Risque assumé** : la restitution **depuis Proton Drive** n'aura pas été testée avant la
+fin de la v1. Mitigation partielle : les tests d'I3 ouvrent les archives produites localement
+et en vérifient le contenu et le chiffrement — cela couvre le risque de **format**, pas celui
+du **téléchargement**.
+
+⚠️ Les dossiers vides n'existent pas dans les archives : leur structure n'est pas restituée.
+
+Pour mémoire, la procédure à écrire puis tester :
+
+    ./proton-drive filesystem download /my-files/databackup/<archive>.zip .
+    # puis ouvrir l'archive avec le mot de passe du §4 et extraire à l'emplacement voulu
 
 ## 11. Sécurité et données personnelles
 
@@ -249,55 +277,66 @@ l'extension **Piloter** (même approche qu'`autobackup`).
 - **Mot de passe des zips** : `.env` local non versionné (priorité à `DATABACKUP_ZIP_PASSWORD`),
   jamais dans le code, les logs ou la sortie d'exécution (cf. §7) ; conservé dans le
   gestionnaire de mots de passe de Yves.
-- ⬜ Les logs exposent-ils trop ? (noms de dossiers `Compta`, `Assurances`, `YM`…) — machine
-  personnelle, dépôt privé : a priori acceptable, à confirmer.
+- **Noms de dossiers et d'archives visibles** dans le log et dans le terminal *(décidé le
+  2026-10-18)* : c'est ce qui rend le diagnostic possible (`[7/22] photos.zip — 3,2 Go —
+  4:12`). Machine personnelle, dépôt privé, `logs/` non versionné — acceptable.
 - ⚠️ `auth login` est **interactif** (navigateur) : en cas d'expiration de session, un
   transfert non supervisé échouera.
 
-## 12. Questions ouvertes
+## 12. Décisions — récapitulatif
 
-**Déjà tranché**
+> **Le CDC v1 est figé** : toutes les questions des trois lots ont été tranchées avec Yves le
+> **2026-10-18**. Cette section n'est plus une liste de questions, mais l'index des décisions
+> (le détail vit dans les sections concernées). Toute évolution passe par le §13 ou une
+> nouvelle décision écrite ici.
 
-- *Socle* : racine `source` en **lecture seule** (§3) ; dossier temporaire `backup` (§6) ; un
-  zip par dossier de premier niveau + `documents.zip` (§3) ; chiffrement **AES-256** avec le
-  mot de passe d'`autobackup` (§4) ; **écrasement** des fichiers existants sur Proton (§5).
-- *Lot A — contenu des archives (2026-10-18)* : **nommage normalisé** (§4) ; `ZIP_STORED`
-  pour `jpg/jpeg/png/gif/mp4/stl/3mf/zip` ; **pas d'archive** pour un dossier de premier
-  niveau vide (sous-dossiers vides conservés dans les archives) ; **aucun filtrage**
-  (temporaires, `.bak`, `*~`, fichiers cachés inclus) ; liens symboliques **ignorés avec
-  avertissement** ; `documents.zip` pour les fichiers de la racine.
-- *Exécution et Piloter (2026-10-18)* : `start.sh` = **lanceur unique**, conforme au contrat
-  Piloter (sans TTY, codes retour, sortie ligne à ligne, annulable) et **créé en I1** (§8) ;
-  **verrou `.databackup.lock`** dès la v1 ; **pas de `auth login` sans TTY** → échec avec le
-  code `4` (§5, §8).
-- *Lot B — transfert et secret (2026-10-18)* : archives **orphelines conservées** et ignorées
-  (rien n'est supprimé côté Proton) ; **aucun contrôle de quota** (le CLI ne l'expose pas, un
-  dépassement fait échouer l'upload) ; mot de passe dans **`.env` local non versionné**
-  (priorité à `DATABACKUP_ZIP_PASSWORD`), **déjà sauvegardé** dans le gestionnaire de Yves ;
-  options **`--dry-run`** et **`--limit N`** (§8).
+**Socle**
 
-**Lot C — archive et restitution**
+- `source/` en **lecture seule absolue**, dossier temporaire `backup/` (§3, §6).
+- **Un zip par dossier de premier niveau** + **`documents.zip`** pour les fichiers racine (§3).
+- Chiffrement **AES-256**, mot de passe du §4 ; **écrasement** des archives distantes (§5).
 
-1. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
-2. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
-   niveau de compression zip (défaut ?) ?
-3. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ? Et en
-   cas de **coupure réseau** au milieu d'un upload (§5) ?
-4. **Vérification post-transfert** : comparer la taille, l'empreinte, ou rien ?
-5. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
-   et continuer, ou échouer ?
-6. **Gros fichier** : valider en réel le transfert de `Photos.zip` (≈ 3,2 Go) — durée,
-   robustesse, et ajustement du `timeout` Piloter en conséquence (§8).
-7. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
-8. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
-9. **Logs** : les noms de dossiers (donc de `Compta`, `Assurances`, `YM`…) restent-ils tels
-   quels dans les logs ? (§11)
+**Lot A — contenu des archives**
+
+- **Nommage normalisé** des archives (§4) ; **collision = échec du scan**.
+- `ZIP_STORED` pour `jpg jpeg png gif mp4 stl 3mf zip` (liste figée, niveau de compression par
+  défaut) ; `odt/ods/docx…` compressés normalement.
+- **Pas d'archive** pour un dossier de premier niveau vide ; sous-dossiers vides conservés.
+- **Aucun filtrage** : temporaires, `.bak`, `*~`, fichiers cachés inclus.
+- Liens symboliques **ignorés avec avertissement**.
+
+**Lot B — transfert et secret**
+
+- Archives **orphelines conservées** (rien n'est jamais supprimé côté Proton) (§5).
+- **Aucun contrôle de quota** — le CLI ne l'expose pas ; un dépassement fait échouer l'upload.
+- Mot de passe dans **`.env` local non versionné** (priorité à `DATABACKUP_ZIP_PASSWORD`), déjà
+  conservé dans le gestionnaire de mots de passe de Yves ; jamais dans le code ni les logs
+  (§7, §11).
+- Options **`--dry-run`** et **`--limit N`** (§8).
+
+**Lot C — archive, échecs et restitution**
+
+- Un upload en échec est **compté en échec et le run continue** ; **aucun réessai automatique**
+  (§6). **Aucune vérification post-transfert** : le code retour du CLI fait foi.
+- **Relancer repart de zéro** (aucun état persisté) — accepté en v1.
+- Fichier **disparu ou illisible** pendant l'archivage : **avertir et continuer** (§6).
+- **Restauration hors v1** (§10) : risque assumé (format validé localement en I3, pas le
+  téléchargement), procédure à écrire et tester ensuite.
+- **Aucune planification** : décision **définitive** (ni cron ni timer systemd) (§2, §8).
+- **Noms de dossiers et d'archives visibles** dans le log et le terminal (§11).
+- `timeout` du bouton Piloter : **1 h** ; premier run réel lancé **à la main** pour mesurer la
+  durée réelle, ajustement ensuite si besoin (§8).
+
+**Seule vérification restante** (ce n'est plus une question) : ⬜ premier run réel complet —
+mesurer la durée, en particulier l'upload de `Photos.zip` (≈ 3,2 Go), et confirmer le `timeout`
+du bouton (§5, §8).
 
 ## 13. Évolutions envisagées (hors v1)
 
+- **restauration** : procédure (téléchargement depuis Proton, déchiffrement, extraction),
+  **test réel** associé, puis éventuelle commande outillée `./start.sh restore` (§10) ;
 - sauvegarde incrémentale avec historique daté (au lieu de l'écrasement) ;
 - suppression des archives orphelines (miroir strict de l'état local) ;
-- commande de restauration outillée (`./start.sh restore`) ;
 - notification de fin (mail, notification bureau) ;
 - autres sources : photos hors `source`, dépôts Git, bases de données ;
 - contrôle d'intégrité périodique des archives distantes ;
