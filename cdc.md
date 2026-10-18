@@ -148,7 +148,32 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
 4. **Archives** — création des zips chiffrés dans `backup/`.
 5. **Transfert** — envoi des zips de `backup/` vers `/my-files/databackup`, un `upload` par
    zip.
-6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive**, même en cas d'échec.
+6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive** (détail ci-dessous).
+
+### Nettoyage du dossier temporaire `backup/` *(règle ferme)*
+
+`backup/` est **temporaire par nature** : il ne doit **jamais** rester des archives dedans
+après un traitement. Garanties attendues :
+
+- **vidé au début** de chaque run (étape 2) : c'est ce qui rattrape un run interrompu
+  brutalement (coupure de courant, `kill -9`, plantage) — le résidu ne pollue pas le run
+  suivant ;
+- **vidé à la fin d'un run `all`**, dans **tous** les cas :
+  - succès complet,
+  - **échec** d'archivage ou de transfert (le run se termine en `1`) ;
+  - **annulation** par `SIGTERM` / `SIGINT` (timeout Piloter, `Ctrl-C`, clic sur la tuile) ;
+- **vidé par l'étape `cleanup`** appelée seule ;
+- **exception voulue** : `scan` et `archive` **seuls** laissent volontairement les archives
+  dans `backup/` — c'est le principe même de l'étape (compresser d'abord, transférer ensuite
+  avec `transfer`). Le vidage n'intervient que sur `cleanup` ou en fin de `all` ;
+- si le vidage est impossible (disque démonté pendant le run), le run **échoue** avec un
+  message explicite (`3`) et **rien d'autre n'est supprimé** — on ne touche jamais à
+  `source/` ni à Proton ;
+- **`SIGKILL`** (inatteignable proprement) : aucune garantie possible, c'est le vidage du
+  début du run suivant qui nettoie.
+
+Conséquence à assumer : sur un run complet, **les archives ne survivent pas** à l'exécution
+(aucune copie locale conservée). C'est voulu — la copie de référence est celle de Proton Drive.
 
 ### Gestion des échecs *(décidé le 2026-10-18)*
 
@@ -213,8 +238,9 @@ l'extension **Piloter** (même approche qu'`autobackup`).
 - **Verrou `.databackup.lock`** (PID) : un second lancement est **refusé** avec le code `5`
   et un message clair. Il sert aussi de **témoin d'activité** (base d'un futur statut Piloter
   « sauvegarde en cours ») et est retiré en fin de run, y compris après une annulation.
-- **Annulable** : sur `SIGTERM` (timeout Piloter, clic sur la tuile « en cours »), arrêt
-  propre — le processus `proton-drive` en cours est terminé, le verrou est libéré, le code
+- **Annulable** : sur `SIGTERM` / `SIGINT` (timeout Piloter, clic sur la tuile « en cours »,
+  `Ctrl-C`), arrêt propre — le processus `proton-drive` en cours est terminé, le dossier
+  `backup/` est **vidé** (comme en fin de run normal, cf. §6), le verrou est libéré, le code
   retour est non nul. Aucun processus détaché ne doit survivre.
 - **Sortie ligne par ligne sur la sortie standard** (le journal de Piloter en garde 500
   lignes) : étapes, compteur `[n/total]`, nom d'archive, taille, durée. **Jamais de secret**
@@ -292,7 +318,9 @@ Pour mémoire, la procédure à écrire puis tester :
 
 **Socle**
 
-- `source/` en **lecture seule absolue**, dossier temporaire `backup/` (§3, §6).
+- `source/` en **lecture seule absolue**, dossier temporaire `backup/` (§3, §6) : **vidé au
+  début et à la fin de chaque run** — succès, échec ou annulation — sauf `scan`/`archive`
+  lancés seuls, qui le laissent volontairement en place pour un `transfer` ultérieur.
 - **Un zip par dossier de premier niveau** + **`documents.zip`** pour les fichiers racine (§3).
 - Chiffrement **AES-256**, mot de passe du §4 ; **écrasement** des archives distantes (§5).
 

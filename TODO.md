@@ -66,10 +66,11 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 - **Livrable** : commande `all` par défaut (scan → archive → transfer → cleanup), nettoyage
   garanti **même en cas d'échec**, code de sortie fiable (`0` / `1`), récapitulatif final
   affiché et journalisé (archives, volume, échecs).
-- **DoD** : test d'un run complet sur données factices ; aucun résidu dans `backup/` après un
-  échec de transfert simulé ; puis **premier run réel complet lancé à la main** (terminal, sans
-  timeout) pour mesurer la durée — en particulier l'upload de `Photos.zip` (~3,2 Go) — et
-  ajuster le `timeout` du bouton Piloter si besoin.
+- **DoD** : test d'un run complet sur données factices ; **aucun résidu dans `backup/`** après
+  un succès, après un échec de transfert simulé **et après un `SIGTERM`** ; puis **premier run
+  réel complet lancé à la main** (terminal, sans timeout) pour mesurer la durée — en
+  particulier l'upload de `Photos.zip` (~3,2 Go) — et ajuster le `timeout` du bouton Piloter
+  si besoin.
 
 ## I6 — Documentation utilisateur (`README.md`)
 

@@ -14,7 +14,8 @@
 ## Décisions actées
 
 - `source/` → `/home/yves/kDrive/Personnel`, **lecture seule** ; `backup/` →
-  `/media/yves/SSDBCK/temp/backup` (temporaire, vidé avant et après).
+  `/media/yves/SSDBCK/temp/backup` — **vidé au début et à la fin de chaque run** (succès,
+  échec ou annulation).
 - **Un zip par dossier de premier niveau** ; fichiers racine → **`documents.zip`** ; **AES-256**,
   nommage **normalisé** (collision = échec du scan), `ZIP_STORED` pour les formats compressés,
   **aucun filtrage**, liens symboliques ignorés (détail : §3 et §4 du CDC).
