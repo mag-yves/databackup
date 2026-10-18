@@ -1,0 +1,42 @@
+# Configuration d'outillage (lint + format).
+# Le projet s'exécute depuis les sources via `start.sh` : pas d'empaquetage Python,
+# donc volontairement pas de [build-system]. Les dépendances d'exécution restent
+# dans requirements.txt.
+
+[project]
+name = "databackup"
+version = "0.1.0"
+description = "Sauvegarde chiffrée par dossier des documents, vers Proton Drive"
+requires-python = ">=3.10"
+dependencies = ["pyzipper==0.4.0"]
+
+# ---------------------------------------------------------------------------
+# Lint / format
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [".venv", "source", "backup", "logs", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort (ordre des imports)
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "C4",   # comprehensions
+    "RUF",  # règles propres à ruff
+]
+
+ignore = ["E501"]  # longueur de ligne (gérée via line-length)
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
