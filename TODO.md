@@ -26,11 +26,13 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   TTY, codes retour, sortie ligne à ligne, annulable, verrou `.databackup.lock`),
   `pyproject.toml` (ruff/pytest, config projet), `requirements.txt` / `requirements-dev.txt`,
   module principal, commandes `scan | archive | transfer | cleanup | all`, logging horodaté
-  dans `logs/` (rotation), `--dry-run`.
+  dans `logs/` (rotation), options `--dry-run` et `--limit N`, lecture du mot de passe dans
+  `.env` (priorité à `DATABACKUP_ZIP_PASSWORD`).
 - **DoD** : `./start.sh scan` démarre et journalise ; un second lancement est **refusé par le
-  verrou** (code 5) et `SIGTERM` le libère proprement ; `ruff` et `pytest` passent ; tests du
-  parseur d'arguments, du logger et du verrou ; `.gitignore` couvre binaire, venv, logs et
-  secrets.
+  verrou** (code 5) et `SIGTERM` le libère proprement ; `--dry-run` n'écrit rien et n'envoie
+  rien ; `ruff` et `pytest` passent ; tests du parseur d'arguments, du logger, du verrou et de
+  la résolution du mot de passe ; `.gitignore` couvre binaire, venv, logs, `.env` et secrets ;
+  **aucun secret dans le code ni dans les logs**.
 
 ## I2 — Scan des sources
 

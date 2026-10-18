@@ -117,14 +117,18 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
   **sans TTY** (Piloter, cron), le script échoue avec le code retour `4` et le message
   « lancez `./proton-drive auth login` » (cf. §8).
 
-**À trancher**
+- **Archives orphelines** (sur Proton, dont le dossier source n'a plus d'existence) :
+  **conservées et ignorées** — **rien n'est jamais supprimé** côté distant en v1. Le dossier
+  de destination peut donc contenir des archives d'anciens dossiers : à nettoyer à la main.
+- **Quota : aucun contrôle automatique.** Le CLI n'expose pas l'espace libre du compte (il
+  n'a que `filesystem size <path>`, la taille d'un dossier). Un dépassement se traduit par un
+  **échec d'upload** : message clair, compté en échec, code retour `1`. Vérification manuelle
+  recommandée dans l'interface web Proton avant la première grosse sauvegarde (≈ 4,8 Go).
 
-- ⬜ **Archives orphelines** (présentes sur Proton, dont le dossier source n'existe plus) :
-  on les laisse (recommandé) ou on les supprime (miroir strict) ?
-- ⬜ **Quota Proton** : ~4,8 Go aujourd'hui et en croissance — vérifier l'espace disponible
-  avant un transfert ? Que faire si insuffisant (échouer, avertir, continuer) ?
+**À trancher** (voir §12, lot C)
+
 - ⬜ **Gros fichier** : `Photos.zip` ≈ 3,2 Go en un seul upload — à valider sur un transfert
-  réel (durée, coupures, reprise).
+  réel (durée, robustesse).
 - ⬜ **Coupure réseau en cours de transfert** : reprise, marquage, ou échec complet ?
 - ⬜ **Vérification post-transfert** (taille et/ou empreinte comparées) ?
 
@@ -153,11 +157,15 @@ Points à trancher :
 - Les chemins machine sont portés par des **symlinks non versionnés** (`source/`, `backup/`),
   comme dans `autobackup` ⬜ (alternative : variables d'environnement).
 - Destination Proton : `/my-files/databackup` (constante de projet, pas un secret).
-- ⬜ **Mot de passe des zips : hors du code.** `autobackup` le garde en dur (dette connue,
-  à ne pas reproduire). Emplacement à choisir : variable d'environnement, ou fichier local
-  non versionné (`.env` / `config.local.*`, déjà couverts par `.gitignore`).
-- ⬜ Le mot de passe doit aussi être **sauvegardé quelque part** (gestionnaire de mots de
-  passe) : sans lui, les archives sont irrécupérables.
+- **Mot de passe des archives : hors du code** *(décidé le 2026-10-18)*. `autobackup` le
+  garde en dur (dette connue, à ne pas reproduire ici).
+  - stockage : fichier **`.env` local non versionné** à la racine du projet (`chmod 600`,
+    déjà couvert par `.gitignore`), lu par `start.sh` ;
+  - la variable d'environnement **`DATABACKUP_ZIP_PASSWORD` est prioritaire** si elle est
+    définie (Piloter peut l'injecter plus tard via le champ `env` de son bouton) ;
+  - le mot de passe est **déjà conservé dans le gestionnaire de mots de passe de Yves** :
+    sans lui, les 21 archives sont irrécupérables ;
+  - ⚠️ il ne doit apparaître **ni dans le code, ni dans un log, ni dans la sortie** (cf. §11).
 
 ## 8. Exécution
 
@@ -166,6 +174,10 @@ Points à trancher :
   **Créé en I1** (décision du 2026-10-18 : pas de script non fonctionnel en dépôt avant I1).
 - Étapes sélectionnables comme dans `autobackup` (`scan` / `archive` / `transfer` / `cleanup`
   séparés), pour pouvoir rejouer une étape sans tout recalculer.
+- **Options de test** *(décidé le 2026-10-18)* : `--dry-run` — affiche le plan complet
+  (dossiers retenus, noms d'archives normalisés, tailles estimées, cible) **sans rien écrire
+  ni envoyer** ; `--limit N` — ne traiter que les **N premiers dossiers**, pour tester un
+  transfert réel sans envoyer 4,8 Go. Les deux sont transmis au module par `start.sh`.
 - ⬜ **Verrou** ⚠️ : deux exécutions simultanées partageraient le dossier `backup/` et se
   détruiraient mutuellement — décision ci-dessous.
 
@@ -234,7 +246,9 @@ l'extension **Piloter** (même approche qu'`autobackup`).
   empreintes des fichiers avant/après une exécution).
 - Aucun secret versionné : `proton-drive`, `.venv/`, `logs/`, `source`, `backup` et les
   fichiers de config locale sont dans `.gitignore`.
-- ⬜ Mot de passe des zips : emplacement (cf. §7) et **sauvegarde** hors projet.
+- **Mot de passe des zips** : `.env` local non versionné (priorité à `DATABACKUP_ZIP_PASSWORD`),
+  jamais dans le code, les logs ou la sortie d'exécution (cf. §7) ; conservé dans le
+  gestionnaire de mots de passe de Yves.
 - ⬜ Les logs exposent-ils trop ? (noms de dossiers `Compta`, `Assurances`, `YM`…) — machine
   personnelle, dépôt privé : a priori acceptable, à confirmer.
 - ⚠️ `auth login` est **interactif** (navigateur) : en cas d'expiration de session, un
@@ -256,27 +270,28 @@ l'extension **Piloter** (même approche qu'`autobackup`).
   Piloter (sans TTY, codes retour, sortie ligne à ligne, annulable) et **créé en I1** (§8) ;
   **verrou `.databackup.lock`** dès la v1 ; **pas de `auth login` sans TTY** → échec avec le
   code `4` (§5, §8).
-
-**Lot B — transfert et secret**
-
-1. **Archives orphelines** sur Proton : conservées (recommandé) ou supprimées ?
-2. **Mot de passe zip hors du code** : variable d'environnement ou fichier local non
-   versionné ? Et où le **sauvegarder** (sans lui, les archives sont irrécupérables) ?
-3. **Options de test** : `--limit N` et/ou `--dry-run` ?
-4. **Quota Proton** : contrôle avant transfert, et comportement si insuffisant (≈ 4,8 Go) ?
+- *Lot B — transfert et secret (2026-10-18)* : archives **orphelines conservées** et ignorées
+  (rien n'est supprimé côté Proton) ; **aucun contrôle de quota** (le CLI ne l'expose pas, un
+  dépassement fait échouer l'upload) ; mot de passe dans **`.env` local non versionné**
+  (priorité à `DATABACKUP_ZIP_PASSWORD`), **déjà sauvegardé** dans le gestionnaire de Yves ;
+  options **`--dry-run`** et **`--limit N`** (§8).
 
 **Lot C — archive et restitution**
 
-5. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
-6. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
+1. **Collision** de noms normalisés (§4) : échec explicite (recommandé) ou suffixe numéroté ?
+2. **Liste `ZIP_STORED`** : ajouter les formats conteneurs zip (`odt`, `ods`, `docx`…) ? Et le
    niveau de compression zip (défaut ?) ?
-7. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ?
-8. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
+3. **Reprise après échec** : relancer repart de zéro (tout recompresser) — acceptable ? Et en
+   cas de **coupure réseau** au milieu d'un upload (§5) ?
+4. **Vérification post-transfert** : comparer la taille, l'empreinte, ou rien ?
+5. **Fichiers modifiés pendant l'exécution** : `source` est synchronisée par kDrive — avertir
    et continuer, ou échouer ?
-9. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
-10. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
-11. **`timeout` du bouton Piloter** (§8) : 2 h proposées pour ~4,8 Go — à confirmer après un
-    premier transfert réel chronométré.
+6. **Gros fichier** : valider en réel le transfert de `Photos.zip` (≈ 3,2 Go) — durée,
+   robustesse, et ajustement du `timeout` Piloter en conséquence (§8).
+7. **Restauration** : documentée seulement (v1) ou commande outillée dès v1 ?
+8. **Planification** automatique : plus tard, ou jamais (exécution manuelle assumée) ?
+9. **Logs** : les noms de dossiers (donc de `Compta`, `Assurances`, `YM`…) restent-ils tels
+   quels dans les logs ? (§11)
 
 ## 13. Évolutions envisagées (hors v1)
 
