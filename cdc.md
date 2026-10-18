@@ -290,7 +290,9 @@ fin de la v1. Mitigation partielle : les tests d'I3 ouvrent les archives produit
 et en vérifient le contenu et le chiffrement — cela couvre le risque de **format**, pas celui
 du **téléchargement**.
 
-⚠️ Les dossiers vides n'existent pas dans les archives : leur structure n'est pas restituée.
+⚠️ Un **dossier de premier niveau vide** ne produit pas d'archive : sa structure n'est pas
+restituée. En revanche, les **sous-dossiers vides** d'un dossier sauvegardé sont conservés
+dans l'archive (§3).
 
 Pour mémoire, la procédure à écrire puis tester :
 

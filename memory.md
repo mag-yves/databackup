@@ -6,33 +6,32 @@
 
 ## État courant
 
-- **CDC v1 figé** le 2026-10-18 (récap §12). **I1** (socle) et **I2** (`scan`) **livrés** :
-  `./start.sh scan` construit le plan (**22 archives**, **4,70 Go** sur la source réelle) ;
-  **47 tests** verts, `ruff` propre. Dépôt `git@github.com:mag-yves/databackup.git`, `main`.
-- Prochain jalon : **I3 — création des archives** (cf. `TODO.md`).
+- **CDC v1 figé** le 2026-10-18 (récap §12). **I1 à I3 livrés** (socle, `scan`, `archive`) :
+  `archive --limit 3` réel → 4 zips **AES-256** (**151 Mo**, 0 erreur) ; **62 tests** verts,
+  `ruff` propre.
+- Prochain jalon : **I4 — transfert vers Proton Drive** (cf. `TODO.md`).
 
 ## Décisions actées (détail au CDC §3–§8)
 
-- `source/` **lecture seule absolue** ; `backup/` **vidé au début et à la fin de chaque run**
-  (`scan`/`archive` seuls le laissent en place) — §3, §6.
-- Un zip par dossier de premier niveau + `documents.zip` (fichiers racine) ; **AES-256**,
-  nommage normalisé, `ZIP_STORED` sur les formats compressés, aucun filtrage — §3, §4.
-- Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD`) ; **en clair au CDC §4**
-  (exception assumée, dépôt privé — §11), mais jamais dans le code, les logs ni la sortie ;
-  destination `/my-files/databackup` en `upload -f replace`, orphelines conservées, pas de
-  quota, échec d'upload → **on continue** — §5, §7.
-- **I1/I2** : `start.sh` fait `exec` du module ; verrou `.databackup.lock` tenu par le module
-  (repris s'il est obsolète) ; `scan` = plan seul (dossiers vides exclus, liens ignorés +
-  avertis, **collision → échec** code `1`) ; `--limit N` (fichiers racine inclus), `--dry-run`.
+- `source/` **lecture seule** ; `backup/` **vidé au début et à la fin de chaque run**
+  (`scan`/`archive` seuls le laissent) ; un zip par dossier de premier niveau + `documents.zip`
+  (fichiers racine) ; **AES-256**, nommage normalisé, `ZIP_STORED` sur les formats compressés,
+  aucun filtrage — §3, §4, §6.
+- Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD` ; **en clair au CDC §4**,
+  exception assumée §11), jamais dans le code, les logs ni la sortie ; destination
+  `/my-files/databackup` (`upload -f replace`), orphelines conservées, échec → **on continue**.
+- **I1–I3** : `exec` du module, verrou `.databackup.lock` (repris si obsolète) ; `scan` = plan
+  seul (**collision → échec** code `1`) ; `archive` vide `backup/` avant d'écrire et conserve
+  les sous-dossiers vides ; `--limit N`, `--dry-run` ; mot de passe absent → échec sans écriture.
 
 ## Dette / points d'attention
 
-- Aucune dette de code ; `pyzipper` installé mais **inutilisé** jusqu'à I3.
-- ⚠️ Ne pas hériter d'`autobackup` : mot de passe en dur (dette connue).
+- Aucune dette de code ; ⚠️ ne pas hériter d'`autobackup` (mot de passe en dur).
 - ⚠️ `source` est **synchronisé par kDrive** : son contenu peut bouger pendant une exécution.
 
 ## Prochaines actions
 
-- 🔴 **I3 — archives** : zips AES-256 dans `backup/` (nommage, arborescence interne fidèle §4).
-- 🟠 Transfert réel (I4/I5) : prérequis `./install.sh`, `.env`, connexion Proton interactive,
-  dossier `/my-files/databackup` ; premier run complet pour mesurer `Photos.zip` (~3,2 Go).
+- 🔴 **I4 — transfert** : un `upload -f replace` par archive, échec compté sans interrompre le
+  run, reprise après `auth login` **seulement en TTY** (code `4` sinon).
+- 🟠 Prérequis du transfert réel : `./install.sh`, `.env`, connexion Proton interactive, dossier
+  `/my-files/databackup` ; premier run complet pour mesurer `Photos.zip` (~3,2 Go).

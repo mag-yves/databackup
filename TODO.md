@@ -1,7 +1,7 @@
 # TODO — DataBackup
 
-État courant : **I1 et I2 livrés** le 2026-10-18 (socle exécutable + étape `scan` ; 47 tests
-verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I3**.
+État courant : **I1 à I3 livrés** le 2026-10-18 (socle exécutable, `scan`, `archive` ; 62 tests
+verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I4**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -52,7 +52,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   Run réel : **22 archives**, **4,70 Go**, 2 315 fichiers, **1 lien symbolique** interne
   détecté (`Prusa/Modèles/02 en cours/Zetests`, ignoré) — CDC §3 corrigé en conséquence.
 
-## I3 — Création des archives
+## I3 — Création des archives ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : produire les archives dans le dossier temporaire.
 - **Livrable** : étape `archive` selon le format acté (CDC §4) : nommage, préservation de
@@ -60,6 +60,13 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 - **DoD** : tests sur données factices — contenu de l'archive vérifié (fichiers et chemins
   relatifs), cas d'un dossier non vide en profondeur, fichiers volumineux stockés si le
   format le prévoit ; sources intactes après run.
+- **Résultat** : `archive` vide `backup/` **avant** l'exécution puis écrit les zips **AES-256**
+  (vérifié : force 3) — arborescence interne fidèle (chemins relatifs), **sous-dossiers vides
+  conservés**, `ZIP_STORED` sur `jpg jpeg png gif mp4 stl 3mf zip` et `ZIP_DEFLATED` sinon ;
+  mot de passe lu de `DATABACKUP_ZIP_PASSWORD`/`.env`, absent → **échec sans écriture**.
+  **15 tests** ajoutés (AES-256, stocké/dégonflé, chemins relatifs, dossiers vides, source
+  intacte, fichier illisible ignoré). Run réel sur 3 dossiers : **4 archives, 151 Mo, 0
+  erreur**. Incohérence du CDC §10 corrigée (sous-dossiers vides conservés).
 
 ## I4 — Transfert vers Proton Drive
 
