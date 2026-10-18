@@ -150,7 +150,7 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
    zip.
 6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive** (détail ci-dessous).
 
-### Nettoyage du dossier temporaire `backup/` *(règle ferme)*
+### Nettoyage du dossier temporaire `backup/` *(règle ferme, confirmée le 2026-10-18)*
 
 `backup/` est **temporaire par nature** : il ne doit **jamais** rester des archives dedans
 après un traitement. Garanties attendues :
@@ -172,8 +172,11 @@ après un traitement. Garanties attendues :
 - **`SIGKILL`** (inatteignable proprement) : aucune garantie possible, c'est le vidage du
   début du run suivant qui nettoie.
 
-Conséquence à assumer : sur un run complet, **les archives ne survivent pas** à l'exécution
-(aucune copie locale conservée). C'est voulu — la copie de référence est celle de Proton Drive.
+Conséquence **assumée et confirmée par Yves** (2026-10-18) : sur un run complet, **les
+archives ne survivent pas** à l'exécution, même celles dont le transfert a échoué (aucune
+copie locale conservée, aucune exception « garder pour diagnostic » — piste examinée puis
+écartée). La copie de référence est celle de **Proton Drive**, et le run suivant recompresse
+tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer repart de zéro »).
 
 ### Gestion des échecs *(décidé le 2026-10-18)*
 
