@@ -1,7 +1,8 @@
 # TODO — DataBackup
 
-État courant : **I1 à I3 livrés** le 2026-10-18 (socle exécutable, `scan`, `archive` ; 62 tests
-verts, `ruff` propre) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait. La prochaine étape est **I4**.
+État courant : **I1 à I4 livrés** le 2026-10-18 (socle, `scan`, `archive`, `transfer` ; 71 tests
+verts, `ruff` propre ; transfert réel vérifié) ; **I0** (CDC v1 figé, récap `cdc.md` §12) fait.
+La prochaine étape est **I5**.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -68,7 +69,7 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   intacte, fichier illisible ignoré). Run réel sur 3 dossiers : **4 archives, 151 Mo, 0
   erreur**. Incohérence du CDC §10 corrigée (sous-dossiers vides conservés).
 
-## I4 — Transfert vers Proton Drive
+## I4 — Transfert vers Proton Drive ✅ **FAIT** (2026-10-18)
 
 - **Objectif** : envoyer les archives vers `/my-files/databackup`.
 - **Livrable** : étape `transfer` : un `upload` par archive (`-f replace`), reprise après
@@ -77,6 +78,12 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 - **DoD** : tests avec une **doublure** de `proton-drive` (succès, échec compté et run qui
   continue, retry après login en TTY, échec sans TTY avec le code `4`, binaire absent) ; puis
   un **transfert réel** avec `--limit N` sur quelques dossiers non critiques.
+- **Résultat** : `transfer` = un `upload -f replace` par archive ; échec **compté sans
+  interrompre** ; en terminal, **une** tentative d'`auth login` + reprise ; **hors terminal →
+  code `4`** ; binaire absent → code `1` ; rien n'est jamais supprimé côté distant.
+  **9 tests** avec une **doublure** (aucun réseau). **Transfert réel** : `all --limit 3` →
+  **4 archives, 151 Mo** envoyées en 35 s, `backup/` vidé, code `0` ; **aller-retour vérifié**
+  (téléchargement de `documents.zip` puis déchiffrement : 8 fichiers lus).
 
 ## I5 — Enchaînement complet, nettoyage et récapitulatif
 
