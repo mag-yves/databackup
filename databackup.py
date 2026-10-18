@@ -9,10 +9,10 @@
 - ``cleanup`` : vide ``backup/`` ;
 - ``all`` : scan → archive → transfer, puis vidage de ``backup/`` (défaut).
 
-**Avancement** : I1 (socle), I2 (``scan``) et I3 (``archive``) sont en place. L'étape
-``transfer`` reste une ébauche (I4). Le socle fournit les arguments, la journalisation
-horodatée avec rotation, le verrou PID, la résolution du secret, les codes retour, l'arrêt
-propre sur SIGTERM / SIGINT et les options ``--dry-run`` / ``--limit``.
+**Avancement** : I1 à I4 en place (socle, ``scan``, ``archive``, ``transfer``). Restent I5
+(enchaînement complet, nettoyage garanti, récapitulatif) et I6 (``README.md``). Le socle fournit
+les arguments, la journalisation horodatée avec rotation, le verrou PID, la résolution du secret,
+les codes retour, l'arrêt propre sur SIGTERM / SIGINT et les options ``--dry-run`` / ``--limit``.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import os
 import re
 import shutil
 import signal
+import subprocess
 import sys
 import time
 import unicodedata
@@ -45,6 +46,7 @@ ENV_FILE = PROJECT_DIR / ".env"
 # Binaire CLI Proton Drive (non versionné, installé par ./install.sh) — cf. cdc.md §5.
 PROTON_DRIVE = PROJECT_DIR / "proton-drive"
 PROTON_PARENT = "/my-files/databackup"
+UPLOAD_STRATEGY = "replace"
 
 # Secret des archives : la variable d'environnement est prioritaire sur .env — cf. cdc.md §7.
 PASSWORD_ENV_VAR = "DATABACKUP_ZIP_PASSWORD"
@@ -574,17 +576,39 @@ def write_archive(plan: ArchivePlan, destination: Path, password: str) -> Archiv
     return ArchiveStats(file_count=written, empty_dirs=len(empty_dirs), size=destination.stat().st_size)
 
 
+# --- Transfert vers Proton Drive --------------------------------------------
+
+
+def is_interactive() -> bool:
+    """Indique si l'exécution se fait dans un vrai terminal (requis par ``auth login``)."""
+    return sys.stdin.isatty()
+
+
+def run_proton_drive(args: list[str]) -> tuple[int, str]:
+    """Exécute le CLI ``proton-drive`` en capturant sa sortie. Retourne (code retour, sortie)."""
+    result = subprocess.run([str(PROTON_DRIVE), *args], capture_output=True, text=True)
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
+
+
+def proton_login() -> bool:
+    """Lance ``auth login`` (interactif : navigateur). Retourne ``True`` si succès."""
+    logger.info("Authentification Proton Drive — ouverture de `auth login` ...")
+    return subprocess.run([str(PROTON_DRIVE), "auth", "login"]).returncode == 0
+
+
+def upload_archive(archive: Path) -> bool:
+    """Envoie une archive vers Proton Drive (``upload -f replace``) — cf. cdc.md §5."""
+    code, output = run_proton_drive(["filesystem", "upload", "-f", UPLOAD_STRATEGY, str(archive), PROTON_PARENT])
+    for line in output.splitlines():
+        if line.strip():
+            logger.info("    | %s", line.strip())
+    if code != 0:
+        logger.error("Échec de l'upload de %s (code %s).", archive.name, code)
+        return False
+    return True
+
+
 # --- Étapes -----------------------------------------------------------------
-
-
-def _log_stub(step: str, limit: int | None, dry_run: bool) -> None:
-    details = []
-    if limit is not None:
-        details.append(f"limit={limit}")
-    if dry_run:
-        details.append("dry-run")
-    suffix = f" ({', '.join(details)})" if details else ""
-    logger.info("Étape « %s » : squelette I1, logique à venir%s.", step, suffix)
 
 
 def step_scan(*, limit: int | None = None, dry_run: bool = False) -> int:
@@ -655,8 +679,60 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False) -> int:
 
 
 def step_transfer(*, dry_run: bool = False) -> int:
-    """Étape ``transfer`` — squelette (implémentée en I4)."""
-    _log_stub("transfer", None, dry_run)
+    """Étape ``transfer`` : envoie les archives vers Proton Drive (cf. cdc.md §5, §6).
+
+    Un échec est **compté** et le run continue ; dans un terminal, une **unique** tentative
+    d'``auth login`` (navigateur) suivie de la reprise de l'archive en cours est permise. Hors
+    terminal, un échec stoppe avec le code `4` (« lancez ``./proton-drive auth login`` »).
+    """
+    archives = sorted(BACKUP_DIR.glob("*.zip"))
+    if dry_run:
+        logger.info("--dry-run : %d archive(s) seraient envoyées vers %s.", len(archives), PROTON_PARENT)
+        return EXIT_OK
+    if not archives:
+        logger.warning("Aucune archive à transférer dans %s.", BACKUP_DIR)
+        return EXIT_OK
+    if not PROTON_DRIVE.is_file() or not os.access(PROTON_DRIVE, os.X_OK):
+        logger.error("Binaire proton-drive introuvable ou non exécutable (%s) — lancez ./install.sh.", PROTON_DRIVE)
+        return EXIT_ERROR
+
+    total = len(archives)
+    logger.info("Transfert de %d archive(s) vers %s ...", total, PROTON_PARENT)
+    failures = 0
+    login_attempted = False
+    for index, archive in enumerate(archives, 1):
+        logger.info("[%d/%d] upload de %s (%s) ...", index, total, archive.name, format_size(archive.stat().st_size))
+        started = time.monotonic()
+        ok = upload_archive(archive)
+
+        if not ok and not is_interactive():
+            logger.error(
+                "Échec hors terminal : `auth login` est impossible. Lancez `./proton-drive auth login` "
+                "dans un terminal, puis relancez.",
+            )
+            return EXIT_AUTH
+        if not ok and not login_attempted:
+            login_attempted = True
+            if proton_login():
+                logger.info("Reconnexion réussie — reprise de %s.", archive.name)
+                ok = upload_archive(archive)
+
+        if ok:
+            logger.info(
+                "[%d/%d] OK %s transférée (%s).",
+                index,
+                total,
+                archive.name,
+                format_duration(time.monotonic() - started),
+            )
+        else:
+            failures += 1
+            logger.error("[%d/%d] ÉCHEC %s — compté, le run continue.", index, total, archive.name)
+
+    if failures:
+        logger.error("Transfert terminé : %d/%d archive(s), %d échec(s).", total - failures, total, failures)
+        return EXIT_ERROR
+    logger.info("Transfert terminé : %d/%d archive(s).", total, total)
     return EXIT_OK
 
 
@@ -669,14 +745,18 @@ def execute(command: str, *, limit: int | None, dry_run: bool) -> int:
     """
     if command == "scan":
         return step_scan(limit=limit, dry_run=dry_run)
-    if command == "transfer":
-        return step_transfer(dry_run=dry_run)
     if command == "cleanup":
         return EXIT_OK
 
-    # all / archive — dossier temporaire vidé avant tout traitement
+    # all / archive / transfer — dossier temporaire requis (cf. cdc.md §6, étape 1)
     if not dry_run:
         require_backup_dir()
+
+    if command == "transfer":
+        return step_transfer(dry_run=dry_run)
+
+    # archive / all — vidage initial avant tout traitement
+    if not dry_run:
         logger.info("Vidage initial de backup/ : %d élément(s) supprimé(s).", empty_backup())
 
     if command == "archive":
