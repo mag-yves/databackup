@@ -1,8 +1,9 @@
 # TODO — DataBackup
 
-État courant : **I1 à I6 livrés et vérifiés en réel** le 2026-10-18 — run complet à froid :
-**14:25** pour 22 archives (4,63 Go), 0 échec, `timeout` Piloter de 1 h confirmé ; 77 tests
-verts, `ruff` propre ; `README.md` complet. **La v1 est terminée** ; la suite est au backlog.
+État courant : **I1 à I7 livrés** — CDC v1 vérifié en réel le 2026-10-18 (run complet : **14:25**
+pour 22 archives, 4,63 Go, 0 échec, `timeout` Piloter de 1 h confirmé) ; **I7** ajoute la
+**sauvegarde incrémentale** (v2, cf. `cdc.md` §6 « Sauvegarde incrémentale » et §12 lot D).
+La suite est au backlog.
 
 **Règle** : on code une itération **seulement après** validation de la section correspondante
 du CDC. Une itération = un objectif mesurable + un livrable testable. Tout ce qui n'est pas
@@ -129,6 +130,39 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 
 ---
 
+## I7 — Sauvegarde incrémentale par dossier ✅ **FAIT** (2026-10-18)
+
+- **Objectif** : ne recompresser et ne renvoyer que les dossiers **modifiés** depuis la dernière
+  sauvegarde **réussie** ; un dossier **sans historique est inclus**.
+- **Livrable** : signature par archive (métadonnées), historique local
+  `.databackup-state.json` (non versionné, écriture atomique), manifeste temporaire du run,
+  étiquetage `nouveau`/`modifié`/`inchangé` au scan, mise à jour de l'historique **après**
+  chaque upload réussi, option `--full`, récapitulatif enrichi ; CDC §2, §6, §7, §8, §9, §11,
+  §12 (lot D), §13 ; `README.md`.
+- **DoD** : 1er run sans historique = **tout** (comportement d'avant) ; 2e run sans changement =
+  **0 archive, 0 upload** ; modification profonde → **seul** ce dossier repart ; ajout,
+  suppression, sous-dossier vide → dossier modifié ; upload en échec → **non** enregistré et
+  retenté ; historique corrompu/absent → avertissement + complet ; `--full` → tout repart ;
+  `--dry-run` → aucun écrit ; `--limit` → seules les archives traitées sont inscrites ; aucune
+  écriture dans `source/` ; `ruff` et `pytest` verts ; puis **run réel** de contrôle.
+- **Résultat (code)** : `databackup.py` gagne une section « historique » (`archive_signature`,
+  `archive_status`, `load_state`/`save_state`, `load_manifest`/`save_manifest`, écriture
+  **atomique**) ; `plan_archives` étiquette chaque archive (`nouveau`/`modifie`/`inchange`) et ne
+  retient que les deux premiers (collisions vérifiées sur **toutes** les archives) ; `archive`
+  écrit le **manifeste** des zips créés ; `transfer` inscrit dans l'historique les seules archives
+  **réellement envoyées** ; option `--full` ; récapitulatif enrichi (« Archives ignorées (déjà à
+  jour) »). **33 tests** ajoutés (`tests/test_history.py` + `tests/conftest.py` qui isole
+  l'historique) : **110** au total, `ruff` propre. `.gitignore`, `AGENTS.md`, `cdc.md`, `README.md`
+  et `TODO.md` mis à jour.
+- **Résultat (réel, 2026-10-18)** : `all --limit 1` → **2 archives, 144 Mo, 30 s** ; run suivant →
+  **2,3 s**, « Archives ignorées (déjà à jour) : 2 » ; **run complet** (19 archives restantes,
+  4,49 Go) → **18:29**, 0 échec, code `0`, 3 archives ignorées, `backup/` vidé ; **run suivant
+  immédiat → 0,2 s, 0 archive créée, 22 ignorées** (contre 14:25 pour le premier run complet du
+  même jour : le gain est réel, l'écart de durée du run complet vient du débit réseau, variable).
+  Côté Proton : **22 archives**, une par dossier + `documents.zip`.
+
+---
+
 ## Backlog (hors v1 — ne pas coder sans décision actée au CDC §13)
 
 - **Piloter** (autre dépôt) : adaptateur `piloter/scripts/databackup-start.sh` + bouton
@@ -137,7 +171,9 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
   réellement depuis Proton Drive** (téléchargement + déchiffrement), puis éventuellement une
   commande `./start.sh restore` ;
 - historique daté côté distant (au lieu du miroir de l'état courant) ;
-- sauvegarde incrémentale (n'envoyer que ce qui a changé) ;
+- incrémental **plus fin** : détection par le **contenu** (hachage) ou à la maille du **fichier**
+  (cf. `cdc.md` §13) ;
+- **hygiène de l'historique** : purge des entrées orphelines, affichage du fichier d'état ;
 - notification de fin (mail ou notification bureau) ;
 - autres sources : photos, dépôts Git, bases de données ;
 - contrôle d'intégrité périodique des archives distantes ;

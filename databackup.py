@@ -3,21 +3,25 @@
 
 Étapes (cf. ``cdc.md`` §6 et §8) :
 
-- ``scan`` : recense les dossiers de premier niveau et les fichiers racine à sauvegarder ;
-- ``archive`` : crée un zip chiffré AES-256 par dossier dans ``backup/`` ;
-- ``transfer`` : envoie les zips de ``backup/`` vers Proton Drive ;
+- ``scan`` : recense les dossiers de premier niveau et les fichiers racine à sauvegarder,
+  en comparant chacun à l'historique (incrémental) ;
+- ``archive`` : crée un zip chiffré AES-256 par dossier **nouveau ou modifié** dans ``backup/`` ;
+- ``transfer`` : envoie les zips de ``backup/`` vers Proton Drive, puis inscrit dans
+  l'historique les seules archives **réellement transférées** ;
 - ``cleanup`` : vide ``backup/`` ;
 - ``all`` : scan → archive → transfer, puis vidage de ``backup/`` (défaut).
 
-**Avancement** : I1 à I4 en place (socle, ``scan``, ``archive``, ``transfer``). Restent I5
-(enchaînement complet, nettoyage garanti, récapitulatif) et I6 (``README.md``). Le socle fournit
-les arguments, la journalisation horodatée avec rotation, le verrou PID, la résolution du secret,
-les codes retour, l'arrêt propre sur SIGTERM / SIGINT et les options ``--dry-run`` / ``--limit``.
+**Sauvegarde incrémentale** (``cdc.md`` §6) : une archive est ignorée **uniquement** si sa
+signature (chemins, tailles, dates de modification — sans lire le contenu) est identique à celle
+d'un transfert réussi passé. Historique absent ou illisible, dossier renommé, ``--full`` : tout
+est refait — perdre l'historique ne fait jamais manquer une sauvegarde.
 """
 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import os
 import re
@@ -28,7 +32,7 @@ import sys
 import time
 import unicodedata
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field, replace
 from datetime import datetime
 from pathlib import Path
 
@@ -53,6 +57,14 @@ PASSWORD_ENV_VAR = "DATABACKUP_ZIP_PASSWORD"
 
 # Rotation des journaux : on ne conserve que les N derniers — cf. cdc.md §9.
 LOG_KEEP = 7
+
+# Sauvegarde incrémentale — cf. cdc.md §6.
+STATE_FILE = PROJECT_DIR / ".databackup-state.json"  # historique (non versionné)
+STATE_VERSION = 1
+MANIFEST_NAME = ".databackup-manifest.json"  # manifeste du run, temporaire, dans backup/
+STATUS_NEW = "nouveau"
+STATUS_MODIFIED = "modifie"
+STATUS_UNCHANGED = "inchange"
 
 # Plage de dates représentable dans un zip (cf. cdc.md §6) : hors plage, la date est ramenée
 # à 1980 pour ne pas perdre le fichier.
@@ -324,6 +336,151 @@ def _final_cleanup() -> bool:
     return True
 
 
+# --- Historique des sauvegardes (incrémental) -------------------------------
+
+
+@dataclass(frozen=True)
+class ArchiveRecord:
+    """Ce qu'un transfert réussi a réellement envoyé, et quand (cf. cdc.md §6).
+
+    ``signature`` est l'empreinte de l'arborescence source **au moment de l'archivage**
+    (cf. :func:`archive_signature`) ; les autres champs sont indicatifs (affichage, diagnostic).
+    """
+
+    signature: str
+    files: int = 0
+    source_bytes: int = 0
+    archive_bytes: int = 0
+    last_backup: str = ""
+
+
+def _file_fingerprint(path: Path) -> str:
+    """Empreinte bon marché d'un fichier : ``taille:date_mtime_ns`` (``?`` si illisible)."""
+    try:
+        info = path.stat()
+    except OSError:
+        return "?"
+    return f"{info.st_size}:{info.st_mtime_ns}"
+
+
+def archive_signature(files: list[Path], empty_dirs: list[Path], base: Path) -> str:
+    """Empreinte de l'arborescence à sauvegarder — base de l'incrémental (cf. cdc.md §6).
+
+    Le **contenu n'est pas lu** : l'empreinte combine le chemin relatif, la taille et la date de
+    modification (ns) de chaque fichier, plus les sous-dossiers vides. Deux états identiques
+    donnent la même empreinte ; toute modification visible par ces métadonnées en donne une autre.
+    """
+    lines = [f"{path.relative_to(base).as_posix()}:{_file_fingerprint(path)}" for path in files]
+    lines += [f"{path.relative_to(base).as_posix()}/:" for path in empty_dirs]
+    digest = hashlib.sha256("\n".join(sorted(lines)).encode("utf-8")).hexdigest()
+    return f"sha256:{digest}"
+
+
+def archive_status(
+    archive_name: str,
+    signature: str,
+    known: Mapping[str, ArchiveRecord],
+    *,
+    full: bool = False,
+) -> tuple[str, str | None]:
+    """Statut d'une archive face à l'historique : ``nouveau``, ``modifie`` ou ``inchange``.
+
+    Retourne ``(statut, date du dernier transfert réussi)``. Aucune entrée d'historique → la
+    sauvegarde est **incluse** (``nouveau``) : c'est le défaut sûr (cf. cdc.md §6). ``full=True``
+    ignore l'historique pour la décision (tout est retenu), la date restant affichée.
+    """
+    record = known.get(archive_name)
+    if record is None:
+        return STATUS_NEW, None
+    if full:
+        return STATUS_MODIFIED, record.last_backup
+    if record.signature == signature:
+        return STATUS_UNCHANGED, record.last_backup
+    return STATUS_MODIFIED, record.last_backup
+
+
+def load_records(path: Path, label: str) -> dict[str, ArchiveRecord]:
+    """Lit un fichier JSON ``{"archives": {nom: entrée}}`` (historique ou manifeste).
+
+    Fichier absent → dictionnaire vide. Fichier **illisible ou incohérent** : avertissement et
+    dictionnaire vide — le run ne doit **jamais** échouer pour un état de travers, et le défaut
+    sûr reste la sauvegarde complète (cf. cdc.md §6).
+    """
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        archives = payload["archives"]
+        if not isinstance(archives, dict):
+            raise ValueError("clé « archives » invalide")
+        records: dict[str, ArchiveRecord] = {}
+        for name, entry in archives.items():
+            if not isinstance(entry, dict) or not isinstance(entry.get("signature"), str):
+                raise ValueError(f"entrée invalide pour {name}")
+            records[name] = ArchiveRecord(
+                signature=entry["signature"],
+                files=int(entry.get("files", 0)),
+                source_bytes=int(entry.get("source_bytes", 0)),
+                archive_bytes=int(entry.get("archive_bytes", 0)),
+                last_backup=str(entry.get("last_backup", "")),
+            )
+        return records
+    except (OSError, KeyError, TypeError, ValueError) as exc:
+        logger.warning(
+            "%s illisible (%s) : %s — toutes les archives seront refaites.",
+            label.capitalize(),
+            path.name,
+            exc,
+        )
+        return {}
+
+
+def save_records(path: Path, records: Mapping[str, ArchiveRecord]) -> bool:
+    """Écrit un fichier d'état de façon **atomique** (fichier temporaire puis remplacement).
+
+    Retourne ``False`` si l'écriture est impossible : le run continue, et la prochaine exécution
+    refera simplement tout (cf. cdc.md §6) — jamais d'échec silencieux, jamais de données perdues.
+    """
+    payload = {
+        "version": STATE_VERSION,
+        "archives": {name: asdict(record) for name, record in sorted(records.items())},
+    }
+    temporary = path.with_name(path.name + ".tmp")
+    try:
+        temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(temporary, path)
+    except OSError as exc:
+        logger.error("Écriture impossible (%s) : %s — la prochaine exécution refera tout.", path.name, exc)
+        temporary.unlink(missing_ok=True)
+        return False
+    return True
+
+
+def load_state(path: Path | None = None) -> dict[str, ArchiveRecord]:
+    """Historique des sauvegardes réussies (cf. cdc.md §6)."""
+    return load_records(path or STATE_FILE, "historique")
+
+
+def save_state(records: Mapping[str, ArchiveRecord], path: Path | None = None) -> bool:
+    """Enregistre l'historique — appelé **uniquement après un upload réussi** (cf. cdc.md §6)."""
+    return save_records(path or STATE_FILE, records)
+
+
+def manifest_path() -> Path:
+    """Manifeste du run en cours : signatures des archives présentes dans ``backup/``."""
+    return BACKUP_DIR / MANIFEST_NAME
+
+
+def load_manifest() -> dict[str, ArchiveRecord]:
+    """Signatures des archives réellement créées par ``archive`` (cf. cdc.md §6)."""
+    return load_records(manifest_path(), "manifeste")
+
+
+def save_manifest(records: Mapping[str, ArchiveRecord]) -> bool:
+    """Écrit le manifeste des archives créées dans ``backup/`` (fichier temporaire)."""
+    return save_records(manifest_path(), records)
+
+
 # --- Scan des sources -------------------------------------------------------
 
 
@@ -341,7 +498,7 @@ def normalize_archive_name(folder_name: str) -> str:
 
 @dataclass(frozen=True)
 class ArchivePlan:
-    """Archive prévue par le scan : nom cible, origine, contenu estimé."""
+    """Archive prévue par le scan : nom cible, origine, contenu estimé, statut incrémental."""
 
     archive_name: str
     origin: Path
@@ -349,15 +506,19 @@ class ArchivePlan:
     file_count: int
     total_size: int
     is_root_files: bool = False
+    signature: str = ""
+    status: str = STATUS_NEW
+    last_backup: str | None = None
 
 
 @dataclass(frozen=True)
 class ScanReport:
-    """Résultat d'un scan : archives prévues, dossiers vides exclus, liens ignorés."""
+    """Résultat d'un scan : archives retenues, ignorées (déjà à jour), vides, liens."""
 
     plans: list[ArchivePlan]
     excluded: list[Path]
     symlinks: list[Path]
+    unchanged: list[ArchivePlan] = field(default_factory=list)
 
     @property
     def total_size(self) -> int:
@@ -418,17 +579,31 @@ def _check_archive_conflicts(plans: list[ArchivePlan]) -> None:
         raise ScanError("Nom d'archive impossible (nom normalisé vide) pour : " + ", ".join(empty_names))
 
 
-def plan_archives(source_dir: Path | None = None, limit: int | None = None) -> ScanReport:
-    """Construit le plan de sauvegarde à partir de ``source_dir`` (cf. cdc.md §3, §4).
+def plan_archives(
+    source_dir: Path | None = None,
+    limit: int | None = None,
+    *,
+    state: Mapping[str, ArchiveRecord] | None = None,
+    full: bool = False,
+) -> ScanReport:
+    """Construit le plan de sauvegarde à partir de ``source_dir`` (cf. cdc.md §3, §4, §6).
 
-    Un dossier de premier niveau = une archive récursive ; les fichiers placés directement
-    à la racine vont dans ``documents.zip``. Un dossier vide est exclu. ``limit`` ne retient
-    que les N premiers dossiers (les fichiers racine restent inclus). Lève :class:`ScanError`
-    si la source est absente ou si des noms d'archives se recouvrent.
+    Un dossier de premier niveau = une archive récursive ; les fichiers placés directement à la
+    racine vont dans ``documents.zip``. Un dossier vide est exclu. ``limit`` ne retient que les N
+    premiers dossiers **retenus** (les fichiers racine restent inclus).
+
+    **Incrémental** : chaque archive est comparée à l'historique ``state`` par sa signature
+    (:func:`archive_signature`) ; seules les archives **nouvelles ou modifiées** entrent dans
+    ``plans``, les autres vont dans ``ScanReport.unchanged``. ``full=True`` ignore l'historique
+    pour la décision. Lève :class:`ScanError` si la source est absente ou si des noms d'archives
+    se recouvrent — la vérification des collisions porte sur **toutes** les archives, y compris
+    celles ignorées.
     """
     source = source_dir or SOURCE_DIR
     if not source.is_dir():
         raise ScanError(f"Dossier source introuvable : {source} — le symlink source/ est-il en place ?")
+
+    known = load_state() if state is None else state
 
     folder_plans: list[ArchivePlan] = []
     excluded: list[Path] = []
@@ -446,34 +621,54 @@ def plan_archives(source_dir: Path | None = None, limit: int | None = None) -> S
             if not files:
                 excluded.append(entry)
                 continue
+            archive_name = f"{normalize_archive_name(entry.name)}.zip"
+            signature = archive_signature(files, collect_empty_dirs(entry), entry)
+            status, last_backup = archive_status(archive_name, signature, known, full=full)
             folder_plans.append(
                 ArchivePlan(
-                    archive_name=f"{normalize_archive_name(entry.name)}.zip",
+                    archive_name=archive_name,
                     origin=entry,
                     label=entry.name,
                     file_count=len(files),
                     total_size=_measure_files(files),
+                    signature=signature,
+                    status=status,
+                    last_backup=last_backup,
                 )
             )
 
-    if limit is not None:
-        folder_plans = folder_plans[:limit]
-
-    plans = list(folder_plans)
+    root_plan: ArchivePlan | None = None
     if root_files:
-        plans.append(
-            ArchivePlan(
-                archive_name="documents.zip",
-                origin=source,
-                label="fichiers racine",
-                file_count=len(root_files),
-                total_size=_measure_files(root_files),
-                is_root_files=True,
-            )
+        signature = archive_signature(root_files, [], source)
+        status, last_backup = archive_status("documents.zip", signature, known, full=full)
+        root_plan = ArchivePlan(
+            archive_name="documents.zip",
+            origin=source,
+            label="fichiers racine",
+            file_count=len(root_files),
+            total_size=_measure_files(root_files),
+            signature=signature,
+            status=status,
+            last_backup=last_backup,
+            is_root_files=True,
         )
 
-    _check_archive_conflicts(plans)
-    return ScanReport(plans=plans, excluded=excluded, symlinks=symlinks)
+    # Toutes les archives sont contrôlées (y compris les inchangées et celles écartées par
+    # ``limit``) : une collision doit toujours arrêter le scan (cf. cdc.md §4).
+    _check_archive_conflicts([*folder_plans, *([root_plan] if root_plan else [])])
+
+    retained = [plan for plan in folder_plans if plan.status != STATUS_UNCHANGED]
+    unchanged = [plan for plan in folder_plans if plan.status == STATUS_UNCHANGED]
+    if limit is not None:
+        retained = retained[:limit]
+
+    plans = list(retained)
+    if root_plan is not None:
+        if root_plan.status == STATUS_UNCHANGED:
+            unchanged.append(root_plan)
+        else:
+            plans.append(root_plan)
+    return ScanReport(plans=plans, excluded=excluded, symlinks=symlinks, unchanged=unchanged)
 
 
 def _log_scan(report: ScanReport, dry_run: bool) -> None:
@@ -482,13 +677,27 @@ def _log_scan(report: ScanReport, dry_run: bool) -> None:
     for folder in report.excluded:
         logger.info("Dossier de premier niveau vide, exclu : %s", folder.name)
 
+    for plan in report.unchanged:
+        since = f", sauvegardé le {plan.last_backup}" if plan.last_backup else ""
+        logger.info("[inchangé] %s -> %s (déjà à jour%s)", plan.label, plan.archive_name, since)
+
     total = len(report.plans)
-    logger.info("%d archive(s) prévue(s), %d dossier(s) vide(s) exclu(s).", total, len(report.excluded))
+    new = sum(1 for plan in report.plans if plan.status == STATUS_NEW)
+    logger.info(
+        "%d archive(s) à faire (%d nouvelle(s), %d modifiée(s)) ; %d ignorée(s) (inchangée(s)) ; "
+        "%d dossier(s) vide(s) exclu(s).",
+        total,
+        new,
+        total - new,
+        len(report.unchanged),
+        len(report.excluded),
+    )
     for index, plan in enumerate(report.plans, 1):
         logger.info(
-            "[%d/%d] %s -> %s (%d fichier(s), %s)",
+            "[%d/%d] (%s) %s -> %s (%d fichier(s), %s)",
             index,
             total,
+            plan.status,
             plan.label,
             plan.archive_name,
             plan.file_count,
@@ -643,38 +852,54 @@ class RunStats:
     """Compteurs consolidés d'un run, pour le récapitulatif final (cf. cdc.md §9)."""
 
     archives_planned: int = 0
+    archives_unchanged: int = 0
     archives_created: int = 0
     archive_volume: int = 0
     archives_sent: int = 0
     transfer_failures: int = 0
 
 
-def step_scan(*, limit: int | None = None, dry_run: bool = False, stats: RunStats | None = None) -> int:
+def step_scan(
+    *, limit: int | None = None, dry_run: bool = False, full: bool = False, stats: RunStats | None = None
+) -> int:
     """Étape ``scan`` : affiche le plan de sauvegarde, sans rien écrire ni envoyer."""
     try:
-        report = plan_archives(limit=limit)
+        report = plan_archives(limit=limit, full=full)
     except ScanError as exc:
         logger.error("%s", exc)
         return EXIT_ERROR
     if stats is not None:
         stats.archives_planned = len(report.plans)
+        stats.archives_unchanged = len(report.unchanged)
     _log_scan(report, dry_run)
     return EXIT_OK
 
 
-def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunStats | None = None) -> int:
-    """Étape ``archive`` : crée les zips chiffrés dans ``backup/`` (cf. cdc.md §4)."""
+def step_archive(
+    *, limit: int | None = None, dry_run: bool = False, full: bool = False, stats: RunStats | None = None
+) -> int:
+    """Étape ``archive`` : crée les zips chiffrés dans ``backup/`` (cf. cdc.md §4).
+
+    Seules les archives **nouvelles ou modifiées** sont créées (cf. cdc.md §6) ; les signatures
+    de celles réellement écrites partent dans le **manifeste** du run, que ``transfer`` lira
+    pour l'historique.
+    """
     try:
-        report = plan_archives(limit=limit)
+        report = plan_archives(limit=limit, full=full)
     except ScanError as exc:
         logger.error("%s", exc)
         return EXIT_ERROR
 
     if stats is not None:
         stats.archives_planned = len(report.plans)
+        stats.archives_unchanged = len(report.unchanged)
 
     if dry_run:
         logger.info("--dry-run : %d archive(s) seraient créées dans %s.", len(report.plans), BACKUP_DIR)
+        return EXIT_OK
+
+    if not report.plans:
+        logger.info("Aucune archive à créer : tous les dossiers sont déjà à jour (cf. cdc.md §6).")
         return EXIT_OK
 
     password = resolve_password()
@@ -690,6 +915,7 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunS
     logger.info("%d archive(s) à créer dans %s.", total, BACKUP_DIR)
     volume = 0
     errors = 0
+    manifest: dict[str, ArchiveRecord] = {}
     for index, plan in enumerate(report.plans, 1):
         logger.info("[%d/%d] %s -> %s ...", index, total, plan.label, plan.archive_name)
         started = time.monotonic()
@@ -699,6 +925,12 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunS
             errors += 1
             logger.error("[%d/%d] [ERREUR] %s : %s", index, total, plan.archive_name, exc)
             continue
+        manifest[plan.archive_name] = ArchiveRecord(
+            signature=plan.signature,
+            files=archive_stats.file_count,
+            source_bytes=plan.total_size,
+            archive_bytes=archive_stats.size,
+        )
         volume += archive_stats.size
         if stats is not None:
             stats.archives_created += 1
@@ -713,6 +945,9 @@ def step_archive(*, limit: int | None = None, dry_run: bool = False, stats: RunS
             format_size(archive_stats.size),
             format_duration(time.monotonic() - started),
         )
+
+    if manifest:
+        save_manifest(manifest)
 
     logger.info(
         "Archivage terminé : %d/%d archive(s), %s, %d erreur(s).",
@@ -746,6 +981,7 @@ def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> in
     logger.info("Transfert de %d archive(s) vers %s ...", total, PROTON_PARENT)
     failures = 0
     login_attempted = False
+    sent: list[Path] = []
     for index, archive in enumerate(archives, 1):
         logger.info("[%d/%d] upload de %s (%s) ...", index, total, archive.name, format_size(archive.stat().st_size))
         started = time.monotonic()
@@ -758,6 +994,7 @@ def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> in
                 "Échec hors terminal : `auth login` est impossible. Lancez `./proton-drive auth login` "
                 "dans un terminal, puis relancez.",
             )
+            _record_backups(sent)
             return EXIT_AUTH
         if not ok and not login_attempted:
             login_attempted = True
@@ -766,6 +1003,7 @@ def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> in
                 ok = upload_archive(archive)
 
         if ok:
+            sent.append(archive)
             logger.info(
                 "[%d/%d] OK %s transférée (%s).",
                 index,
@@ -781,6 +1019,8 @@ def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> in
         stats.archives_sent = total - failures
         stats.transfer_failures = failures
 
+    _record_backups(sent)
+
     if failures:
         logger.error("Transfert terminé : %d/%d archive(s), %d échec(s).", total - failures, total, failures)
         return EXIT_ERROR
@@ -788,15 +1028,48 @@ def step_transfer(*, dry_run: bool = False, stats: RunStats | None = None) -> in
     return EXIT_OK
 
 
-def execute(command: str, *, limit: int | None, dry_run: bool, stats: RunStats) -> int:
+def _record_backups(sent: list[Path]) -> None:
+    """Inscrit dans l'historique les archives **réellement transférées** (cf. cdc.md §6).
+
+    Les signatures viennent du **manifeste** écrit par ``archive`` : c'est l'état de la source au
+    moment de l'archivage, donc le contenu réellement présent sur Proton — et non l'état de
+    ``source/`` au moment du transfert (kDrive peut avoir bougé entre-temps). Sans manifeste,
+    rien n'est inscrit : le défaut reste sûr, la prochaine exécution refera tout.
+    """
+    if not sent:
+        return
+    manifest = load_manifest()
+    missing = [archive.name for archive in sent if archive.name not in manifest]
+    if missing:
+        logger.warning(
+            "Manifeste absent pour %d archive(s) (%s) : historique non mis à jour, elles seront refaites "
+            "au prochain run. Enchaînez `archive` puis `transfer` dans la même exécution (ou `all`).",
+            len(missing),
+            ", ".join(missing),
+        )
+    records = load_state()
+    now = datetime.now().isoformat(timespec="seconds")
+    updated = 0
+    for archive in sent:
+        entry = manifest.get(archive.name)
+        if entry is None:
+            continue
+        records[archive.name] = replace(entry, last_backup=now)
+        updated += 1
+    if updated and save_state(records):
+        logger.info("Historique mis à jour : %d archive(s) à jour au %s.", updated, now)
+
+
+def execute(command: str, *, limit: int | None, dry_run: bool, full: bool, stats: RunStats) -> int:
     """Exécute la commande demandée et retourne un code retour.
 
     ``all`` et ``archive`` vident ``backup/`` au début (cf. cdc.md §6, étape 2). Le vidage
     final (``all``, ``cleanup``) est garanti par :func:`main` dans son ``finally``, y compris
-    en cas d'annulation. ``stats`` est alimenté pour le récapitulatif final.
+    en cas d'annulation. ``stats`` est alimenté pour le récapitulatif final. ``full`` ignore
+    l'historique (tout est refait) — cf. cdc.md §6.
     """
     if command == "scan":
-        return step_scan(limit=limit, dry_run=dry_run, stats=stats)
+        return step_scan(limit=limit, dry_run=dry_run, full=full, stats=stats)
     if command == "cleanup":
         return EXIT_OK
 
@@ -812,11 +1085,11 @@ def execute(command: str, *, limit: int | None, dry_run: bool, stats: RunStats) 
         logger.info("Vidage initial de backup/ : %d élément(s) supprimé(s).", empty_backup())
 
     if command == "archive":
-        return step_archive(limit=limit, dry_run=dry_run, stats=stats)
+        return step_archive(limit=limit, dry_run=dry_run, full=full, stats=stats)
 
-    return_code = step_scan(limit=limit, dry_run=dry_run, stats=stats)
+    return_code = step_scan(limit=limit, dry_run=dry_run, full=full, stats=stats)
     if return_code == EXIT_OK:
-        return_code = step_archive(limit=limit, dry_run=dry_run, stats=stats)
+        return_code = step_archive(limit=limit, dry_run=dry_run, full=full, stats=stats)
     if return_code == EXIT_OK:
         return_code = step_transfer(dry_run=dry_run, stats=stats)
     return return_code
@@ -834,6 +1107,8 @@ def _log_summary(stats: RunStats, elapsed: float, return_code: int, *, dry_run: 
             stats.archives_sent,
             stats.transfer_failures,
         )
+        if stats.archives_unchanged:
+            logger.info("Archives ignorées (déjà à jour) : %d.", stats.archives_unchanged)
     logger.info("Durée : %s. Code retour : %d.", format_duration(elapsed), return_code)
 
 
@@ -846,7 +1121,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         prog="databackup",
         description="DataBackup — sauvegarde chiffrée des documents vers Proton Drive.",
     )
-    parser.set_defaults(command=None, dry_run=False, limit=None)
+    parser.set_defaults(command=None, dry_run=False, limit=None, full=False)
     subparsers = parser.add_subparsers(dest="command", metavar="{scan,archive,transfer,cleanup,all}")
 
     commands = (
@@ -871,6 +1146,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                 metavar="N",
                 help="Ne traiter que les N premiers dossiers de premier niveau (test).",
             )
+            subparser.add_argument(
+                "--full",
+                action="store_true",
+                help="Ignorer l'historique : refaire toutes les archives (sauvegarde complète).",
+            )
     return parser.parse_args(argv)
 
 
@@ -886,6 +1166,8 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Mode --dry-run : rien ne sera écrit dans backup/, rien ne sera envoyé.")
     if args.limit is not None:
         logger.info("Limite : %d dossier(s) de premier niveau.", args.limit)
+    if args.full:
+        logger.info("Option --full : l'historique est ignoré, toutes les archives sont refaites.")
     if command in ("all", "archive"):
         log_password_source()
 
@@ -900,7 +1182,7 @@ def main(argv: list[str] | None = None) -> int:
     started = time.monotonic()
     stats = RunStats()
     try:
-        return_code = execute(command, limit=args.limit, dry_run=args.dry_run, stats=stats)
+        return_code = execute(command, limit=args.limit, dry_run=args.dry_run, full=args.full, stats=stats)
     except BackupUnavailable as exc:
         logger.error("%s", exc)
         return_code = EXIT_BACKUP

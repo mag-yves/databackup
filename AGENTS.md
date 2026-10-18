@@ -33,6 +33,11 @@ aujourd'hui le projet n'a que sa documentation et son outillage de référence.
 - **`start.sh` doit rester compatible Piloter** : lanceur unique du projet, contrat détaillé
   au `cdc.md` §8 (sans TTY, codes retour, sortie ligne par ligne, annulable, verrou
   `.databackup.lock`). Ne pas casser ce contrat sans le réécrire d'abord dans le CDC.
+- **Incrémental (I7)** : seules les archives **nouvelles ou modifiées** sont (re)créées puis
+  envoyées ; un dossier **sans historique est inclus**. L'historique
+  (`.databackup-state.json`) n'est écrit **qu'après un upload réussi** et sa perte est sans
+  danger (le run suivant est complet). Toute évolution de cette mécanique se décide d'abord au
+  `cdc.md` §6 (« Sauvegarde incrémentale »).
 - La référence de fonctionnement du CLI Proton Drive est `usage-proton-drive-cli.md`.
 
 ## Structure
@@ -45,7 +50,8 @@ aujourd'hui le projet n'a que sa documentation et son outillage de référence.
 - `logs/` — logs horodatés (rotation prévue : les N derniers).
 - `time-tracker/` — suivi du temps (`devtime`) : `log.json` est **versionné**.
 - `.opencode/commands/` — commandes projet `/time-*`.
-- **Non versionné** : `proton-drive` (binaire, ~93 Mo), `.venv/`, `logs/`, secrets de config.
+- **Non versionné** : `proton-drive` (binaire, ~93 Mo), `.venv/`, `logs/`, secrets de config,
+  `.databackup-state.json` (historique de l'incrémental, cf. `cdc.md` §6).
 
 ## Pièges à connaître
 

@@ -14,7 +14,27 @@ synchronisation bidirectionnelle. La référence fonctionnelle est le cahier des
   `/my-files/databackup` (une archive distante de même nom est **écrasée**).
 - **Rien n'est jamais supprimé côté distant** : les archives d'anciens dossiers sont conservées
   (à nettoyer à la main).
-- Un run **écrase** l'état précédent — ce n'est pas un historique daté.
+- **Sauvegarde incrémentale** (cf. §« Incrémental ») : seuls les dossiers **modifiés** sont
+  recompressés et renvoyés ; un dossier **sans historique est toujours inclus**.
+- Un run **écrase** l'état précédent côté Proton — ce n'est pas un historique daté.
+
+## Incrémental — ne refaire que ce qui a changé
+
+Chaque run compare les dossiers à un **historique local** (`.databackup-state.json`, non
+versionné, sans secret) et ne recompresse puis ne renvoie que les **nouveaux** ou **modifiés**.
+Concrètement :
+
+- la comparaison se fait sur les **métadonnées** (chemin, taille, date de modification, plus les
+  sous-dossiers vides) : le contenu des fichiers n'est **jamais relu** ;
+- l'historique n'est mis à jour qu'**après un upload réussi** : un transfert en échec est
+  simplement retenté au run suivant ;
+- **tout ce qui n'est pas prouvé à jour est sauvegardé** : pas d'historique (premier run,
+  `git clone` neuf, fichier supprimé), historique illisible, dossier renommé → sauvegarde
+  **complète**. Perdre l'historique ne peut donc jamais faire *manquer* une sauvegarde ;
+- `./start.sh all --full` ignore l'historique et refait **tout** (dépannage, après une
+  restauration) ;
+- limites assumées : un fichier modifié en conservant **taille et date** n'est pas détecté, et
+  une archive supprimée **à la main** sur Proton ne sera pas renvoyée (cf. `cdc.md` §6).
 
 ## Prérequis
 
@@ -76,9 +96,9 @@ synchronisation bidirectionnelle. La référence fonctionnelle est le cahier des
 
 | Commande | Effet |
 |---|---|
-| `scan` | Affiche le plan (dossiers retenus, noms d'archives, volume estimé) — **n'écrit rien**. |
-| `archive` | Crée les archives chiffrées dans `backup/` (dossier vidé **avant**). |
-| `transfer` | Envoie les archives de `backup/` vers Proton Drive. |
+| `scan` | Affiche le plan : dossiers **nouveaux / modifiés / inchangés**, noms d'archives, volume estimé — **n'écrit rien**. |
+| `archive` | Crée dans `backup/` les archives chiffrées **des dossiers nouveaux ou modifiés** (dossier vidé **avant**). |
+| `transfer` | Envoie les archives de `backup/` vers Proton Drive, puis met à jour l'historique. |
 | `cleanup` | Vide `backup/`. |
 | `all` | `scan` → `archive` → `transfer`, puis vide `backup/` (**défaut**). |
 
@@ -86,12 +106,14 @@ synchronisation bidirectionnelle. La référence fonctionnelle est le cahier des
 |---|---|
 | `--dry-run` | Affiche le plan sans rien écrire dans `backup/` ni rien envoyer. |
 | `--limit N` | Ne traite que les **N premiers dossiers** (`scan`, `archive`, `all`) — test sans envoyer 5 Go. |
+| `--full` | **Ignore l'historique** : refait toutes les archives (`scan`, `archive`, `all`). |
 
 ```bash
-./start.sh                  # sauvegarde complète (scan → archive → transfert → nettoyage)
+./start.sh                  # sauvegarde incrémentale (scan → archive → transfert → nettoyage)
 ./start.sh scan             # que serait-il sauvegardé ?
 ./start.sh scan --limit 3   # les 3 premiers dossiers seulement
 ./start.sh all --limit 2    # test réel (archivage + envoi) sur 2 dossiers
+./start.sh all --full       # tout refaire, comme si l'historique n'existait pas
 ./start.sh cleanup          # vide backup/ (déjà vide à la fin d'un « all » réussi)
 ```
 
@@ -99,6 +121,11 @@ synchronisation bidirectionnelle. La référence fonctionnelle est le cahier des
 
 `archive` seul **laisse** ses archives dans `backup/` (pour un `transfer` ultérieur) ; `all` les
 envoie puis **vide** `backup/` quoi qu'il arrive. `scan` seul ne touche à rien.
+
+Un run courant n'envoie donc **que ce qui a changé** : la première fois tout part, ensuite
+quelques secondes suffisent si rien n'a bougé. L'historique vit dans `.databackup-state.json`
+(racine du projet, non versionné) : le supprimer est **sans danger**, le run suivant sera
+simplement complet.
 
 ## Codes retour
 
@@ -116,6 +143,8 @@ envoie puis **vide** `backup/` quoi qu'il arrive. `scan` seul ne touche à rien.
 - Un fichier par exécution : `logs/databackup-<horodatage>.log` ; les **7 derniers** conservés.
 - La sortie s'affiche aussi sur le terminal, ligne à ligne : étape, compteur `[n/total]`, nom
   d'archive, taille, durée, puis un **récapitulatif final** (archives, volume, échecs, durée).
+- En incrémental, le scan liste les dossiers **inchangés** (avec la date du dernier transfert) et
+  le récapitulatif ajoute « Archives ignorées (déjà à jour) : N ».
 - Le mot de passe **n'apparaît jamais** dans les logs ni dans la sortie.
 
 ## Annulation
@@ -151,6 +180,16 @@ Les archives sont des **zip AES-256 standard**, ouvrables avec le mot de passe :
 - **Code `5`** (« déjà en cours ») : un run tourne, ou un verrou est resté après un `kill -9`.
   Un verrou laissé par un processus disparu est **repris automatiquement** au lancement suivant.
 - **Code `3`** : le disque de `backup/` n'est pas monté (ou le lien `backup` est cassé).
+- **« Aucune archive à créer » / lignes « [inchangé] »** : c'est l'incrémental qui fonctionne —
+  ces dossiers sont identiques à leur dernière sauvegarde **réussie**. Pour tout refaire :
+  `./start.sh all --full`.
+- **« Historique illisible »** : `.databackup-state.json` est corrompu ; il est ignoré et le run
+  est **complet** (l'historique est réécrit à la fin). Le supprimer donne exactement le même
+  effet, sans risque.
+- **« Manifeste absent pour N archive(s) »** : `transfer` a envoyé des archives dont il ne
+  connaissait pas la signature (archives copiées à la main dans `backup/`, ou manifeste effacé) :
+  rien n'est enregistré, elles seront refaites. Utiliser `all`, ou `archive` puis `transfer` dans
+  la même exécution.
 - **« date de modification hors plage ZIP »** : un fichier est daté avant 1980 ; il est archivé
   avec la date ramenée à 1980 (le fichier est conservé).
 - **« Lien symbolique ignoré »** : les liens internes ne sont pas suivis (choix de conception).

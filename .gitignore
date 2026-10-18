@@ -23,6 +23,9 @@ logs/
 # Verrou d'exécution (PID de la sauvegarde en cours)
 .databackup.lock
 
+# Historique des sauvegardes réussies (sauvegarde incrémentale, I7 — cf. cdc.md §6)
+.databackup-state.json
+
 # Configuration locale et secrets (ne jamais versionner)
 .env
 config.local.*

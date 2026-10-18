@@ -75,6 +75,19 @@ class TestParseArgs:
         args = databackup.parse_args(["all", "--dry-run", "--limit", "3"])
         assert args.dry_run is True
         assert args.limit == 3
+        assert args.full is False
+
+    def test_full_is_available_on_scan_archive_and_all(self) -> None:
+        for command in ("scan", "archive", "all"):
+            assert databackup.parse_args([command, "--full"]).full is True
+
+    def test_full_is_absent_from_transfer_and_cleanup(self) -> None:
+        """``transfer`` et ``cleanup`` n'ont pas de ``--full`` (mais la valeur par défaut existe)."""
+        assert databackup.parse_args(["transfer"]).full is False
+        assert databackup.parse_args(["cleanup"]).full is False
+        with pytest.raises(SystemExit) as excinfo:
+            databackup.parse_args(["transfer", "--full"])
+        assert excinfo.value.code == databackup.EXIT_USAGE
 
     def test_defaults(self) -> None:
         args = databackup.parse_args(["transfer"])
@@ -251,7 +264,7 @@ class TestProcessContract:
         runner.write_text(
             "import sys, time\n"
             "import databackup\n"
-            "def slow(*, limit=None, dry_run=False, stats=None):\n"
+            "def slow(*, limit=None, dry_run=False, full=False, stats=None):\n"
             "    time.sleep(60)\n"
             "    return 0\n"
             "databackup.step_scan = slow\n"

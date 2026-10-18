@@ -10,11 +10,14 @@
 
 Sauvegarder les documents du dossier `source` vers **Proton Drive**, sous forme d'**une
 archive zip chiffrée par dossier** de premier niveau. L'objectif est une sauvegarde **hors
-site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
+site** simple, rejouable à la main, sans synchronisation bidirectionnelle. Depuis I7, seuls
+les dossiers **modifiés** sont recompressés et renvoyés (sauvegarde **incrémentale**, §6).
 
 ## 2. Périmètre
 
-### Dans le périmètre (v1)
+### Dans le périmètre
+
+**v1**
 
 - Lecture de **tout** le contenu de `source/` (symlink → `/home/yves/kDrive/Personnel`),
   **en lecture seule** ;
@@ -25,11 +28,21 @@ site** simple, rejouable à la main, sans synchronisation bidirectionnelle.
   nom (cf. §5) ;
 - exécution **manuelle** via `./start.sh` (cf. §8).
 
-### Hors périmètre (v1)
+**v2 — sauvegarde incrémentale** *(décidé le 2026-10-18, livré en I7)*
+
+- n'**archiver** et n'**envoyer** que les dossiers dont le contenu a **changé** depuis la
+  dernière sauvegarde **réussie** ; un dossier **sans historique est inclus** (cf. §6) ;
+- historique **local** des sauvegardes réussies : `.databackup-state.json`, **non versionné** ;
+- option **`--full`** : ignorer l'historique et tout refaire (cf. §8).
+
+### Hors périmètre
 
 - historique **daté** côté distant (on écrase : un seul état courant) ;
-- sauvegarde **incrémentale** (on refait tous les zips à chaque exécution) ;
-- **suppression** côté Proton (les archives orphelines sont conservées, cf. §5) ;
+- **suppression** côté Proton (les archives orphelines sont conservées, cf. §5) ; les entrées
+  d'historique correspondantes sont conservées aussi (cf. §6) ;
+- détection **par le contenu** des fichiers : l'incrémental se fonde sur les **métadonnées**
+  (cf. §6) — relire les 4,8 Go à chaque run coûterait plus que le gain ;
+- **purge de l'historique** : le fichier d'état n'est ni purgé ni compacté automatiquement ;
 - **restauration** : aucune procédure ni outil en v1 (reportée après la v1, cf. §10) ;
 - **planification automatique** : décision **définitive** — cron / timer systemd sont exclus,
   la sauvegarde est toujours déclenchée à la main (§8) ;
@@ -147,11 +160,54 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
    explicite (`backup/` → `/media/yves/SSDBCK/temp/backup`).
 2. **Nettoyage** — `backup/` est **vidé** avant toute chose (il est temporaire).
 3. **Scan** — dossiers de premier niveau de `source/` retenus + fichiers racine ; les
-   dossiers vides sont écartés ; toute **collision de noms d'archives** arrête le scan (§4).
-4. **Archives** — création des zips chiffrés dans `backup/`.
+   dossiers vides sont écartés ; toute **collision de noms d'archives** arrête le scan (§4) ;
+   chaque archive est comparée à **l'historique** : seule une archive **nouvelle ou modifiée**
+   est retenue (cf. « Sauvegarde incrémentale » ci-dessous).
+4. **Archives** — création des zips chiffrés **des seules archives retenues** dans `backup/`.
 5. **Transfert** — envoi des zips de `backup/` vers `/my-files/databackup`, un `upload` par
-   zip.
+   zip ; **l'historique n'est mis à jour qu'après un upload réussi** (cf. ci-dessous).
 6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive** (détail ci-dessous).
+
+### Sauvegarde incrémentale — historique local *(décidé le 2026-10-18, livré en I7)*
+
+**Principe de sûreté, directeur de toute la mécanique** : l'historique est une **optimisation**,
+jamais une raison de sauter une sauvegarde. Est ignorée **uniquement** une archive dont on a la
+**preuve** qu'elle est identique **et** déjà transférée. Dans tous les autres cas — historique
+absent, illisible, dossier renommé, option `--full` — l'archive est **incluse**.
+
+- **Ce que l'on compare** : pour chaque archive prévue (un dossier de premier niveau, ou
+  `documents.zip` pour la racine), une **signature** = `sha256` d'une liste triée de
+  `chemin relatif` + `taille` + `date de modification (ns)` de **tous** ses fichiers, plus ses
+  sous-dossiers vides. Le **contenu n'est jamais lu** : l'arborescence est parcourue (métadonnées
+  seules, quelques secondes) mais seules les archives **nouvelles ou modifiées** sont ensuite
+  compressées puis envoyées — le coût CPU et réseau disparaît pour les dossiers inchangés.
+- **Signature au moment de l'archivage** : un **manifeste** (`backup/.databackup-manifest.json`,
+  fichier **temporaire** comme les archives) porte la signature des zips réellement créés. Le
+  transfert s'en sert pour l'historique : la signature inscrite est donc celle du contenu
+  **réellement envoyé**, et non l'état de `source/` au moment du transfert — `source/` est
+  synchronisé par kDrive et peut bouger entre l'archivage et l'envoi.
+- **Historique** : `.databackup-state.json` à la racine du projet, **non versionné** (comme
+  `.env` et `.databackup.lock`, cf. §7 et §11), écrit de façon **atomique** (fichier temporaire
+  puis remplacement). Une entrée par archive : signature, nombre de fichiers, octets source,
+  octets de l'archive, date du dernier transfert réussi.
+- **Mise à jour** : **après chaque upload réussi**, et seulement là. Un upload en échec (§5) ne
+  laisse **aucune** trace : l'archive sera refaite et renvoyée au run suivant.
+- **Défaut sûr** : historique absent ou illisible → **avertissement** et sauvegarde **complète**
+  (premier run, `git clone` neuf, fichier supprimé à la main). Perdre l'historique ne peut donc
+  jamais faire **manquer** une sauvegarde, seulement en refaire une.
+- **`--limit N`** (test) : ne retient que les N premières archives **retenues** et n'inscrit dans
+  l'historique que celles réellement transférées ; les autres restent « nouvelles ».
+- **Ce qui n'est pas détecté** (limites assumées) : un fichier modifié **en conservant sa taille
+  et sa date** (aucun hachage de contenu, cf. §2) ; une archive **supprimée à la main** sur
+  Proton (l'historique la dit à jour) ; un **dossier renommé** produit une archive neuve,
+  l'ancienne restant orpheline (§5). Dans les trois cas, la sauvegarde n'est jamais perdue :
+  au pire un contenu est absent du côté distant, jamais un dossier entier silencieusement oublié.
+
+✅ **Mesuré en réel le 2026-10-18** : run complet **18:29** pour 19 archives (4,49 Go, 0 échec,
+3 archives ignorées) — puis, **immédiatement après**, run **0,2 s** : **22 archives ignorées**,
+aucune archive créée ni envoyée, `backup/` vide, code retour `0`. Le gain de l'incrémental est
+donc bien celui de l'archivage et du transfert ; la durée d'un run **complet** dépend du débit
+réseau (14:25 pour le premier run du même jour, 18:29 pour celui-ci, à volume comparable).
 
 ### Nettoyage du dossier temporaire `backup/` *(règle ferme, confirmée le 2026-10-18)*
 
@@ -168,7 +224,9 @@ après un traitement. Garanties attendues :
 - **vidé par l'étape `cleanup`** appelée seule ;
 - **exception voulue** : `scan` et `archive` **seuls** laissent volontairement les archives
   dans `backup/` — c'est le principe même de l'étape (compresser d'abord, transférer ensuite
-  avec `transfer`). Le vidage n'intervient que sur `cleanup` ou en fin de `all` ;
+  avec `transfer`). Le vidage n'intervient que sur `cleanup` ou en fin de `all` ; le
+  **manifeste** du run (cf. « Sauvegarde incrémentale ») y reste aussi, car le `transfer`
+  ultérieur en a besoin pour l'historique ;
 - si le vidage est impossible (disque démonté pendant le run), le run **échoue** avec un
   message explicite (`3`) et **rien d'autre n'est supprimé** — on ne touche jamais à
   `source/` ni à Proton ;
@@ -178,8 +236,10 @@ après un traitement. Garanties attendues :
 Conséquence **assumée et confirmée par Yves** (2026-10-18) : sur un run complet, **les
 archives ne survivent pas** à l'exécution, même celles dont le transfert a échoué (aucune
 copie locale conservée, aucune exception « garder pour diagnostic » — piste examinée puis
-écartée). La copie de référence est celle de **Proton Drive**, et le run suivant recompresse
-tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer repart de zéro »).
+écartée). La copie de référence est celle de **Proton Drive**. Depuis I7 (sauvegarde
+incrémentale), ce sont les **signatures** des archives réellement transférées qui survivent,
+dans `.databackup-state.json` : le run suivant ne refait donc que ce qui manque, y compris les
+archives dont l'envoi avait échoué (aucune trace enregistrée pour elles).
 
 ### Gestion des échecs *(décidé le 2026-10-18)*
 
@@ -196,8 +256,10 @@ tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer r
   `Prusa` : cause d'un échec réel corrigé en I5.)*
 - Un fichier que le format **refuse d'ajouter** (nom non encodable…) → **avertissement et
   fichier ignoré**, sans interrompre l'archive ni le dossier.
-- **Relancer repart de zéro** : tout est recompressé (aucun état persisté entre deux
-  exécutions). Accepté en v1 — le coût est la lecture de ~4,8 Go.
+- **Relance** : seules les archives **non encore sauvegardées** — nouvelles, modifiées, ou dont
+  l'envoi précédent a échoué — sont refaites ; l'historique local ne retient que les transferts
+  **réussis** (cf. « Sauvegarde incrémentale »). Il reste **supprimable à tout moment** : sans
+  lui, le run suivant est simplement complet.
 - Espace disque : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au 2026-10-18) —
   aucun garde-fou dédié, l'échec d'écriture restant un échec explicite.
 
@@ -211,6 +273,12 @@ tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer r
   comme dans `autobackup` — décision conservée : ils fonctionnent et restent propres à la
   machine (les alternatives par variables d'environnement n'apportent rien ici).
 - Destination Proton : `/my-files/databackup` (constante de projet, pas un secret).
+- **Historique des sauvegardes** *(I7)* : **`.databackup-state.json`** à la racine du projet —
+  fichier **local non versionné** (mêmes règles que `.env` et `.databackup.lock`), qui ne contient
+  **aucun secret** (noms d'archives, signatures, tailles, dates). Il peut être **supprimé à tout
+  moment** : la sauvegarde suivante est alors simplement complète. Le **manifeste** du run en cours
+  (`backup/.databackup-manifest.json`) est, lui, un **déchet temporaire** comme les archives
+  (vidé avec elles, cf. §6).
 - **Mot de passe des archives : hors du code** *(décidé le 2026-10-18)*. `autobackup` le
   garde en dur (dette connue, à ne pas reproduire ici).
   - stockage : fichier **`.env` local non versionné** à la racine du projet (`chmod 600`,
@@ -230,8 +298,11 @@ tout : c'est le prix de la simplicité (aucun état persisté, cf. « Relancer r
   séparés), pour pouvoir rejouer une étape sans tout recalculer.
 - **Options de test** *(décidé le 2026-10-18)* : `--dry-run` — affiche le plan complet
   (dossiers retenus, noms d'archives normalisés, tailles estimées, cible) **sans rien écrire
-  ni envoyer** ; `--limit N` — ne traiter que les **N premiers dossiers**, pour tester un
+  ni envoyer** ; `--limit N` — ne traiter que les **N premiers dossiers** retenus, pour tester un
   transfert réel sans envoyer 4,8 Go. Les deux sont transmis au module par `start.sh`.
+- **`--full`** *(I7)* : **ignorer l'historique** et refaire toutes les archives, comme avant
+  l'incrémental (dépannage, test, ou après une restauration). Disponible sur `scan`, `archive`
+  et `all` — `transfer` n'en a pas besoin : il envoie ce qui est dans `backup/`.
 
 ### Contrat de `start.sh` — compatible Piloter
 
@@ -284,6 +355,10 @@ l'extension **Piloter** (même approche qu'`autobackup`).
   cours, taille, durée écoulée.
 - **Récapitulatif final** *(décidé le 2026-10-18)* : nombre d'archives, volume total, durée et
   échecs — affiché et journalisé à la fin du run (livrable d'I5).
+- **Avancement incrémental** *(I7)* : le scan étiquette chaque dossier `nouveau`, `modifié` ou
+  `inchangé` (avec la date du dernier transfert réussi), puis rappelle le nombre d'archives
+  ignorées ; le récapitulatif final ajoute la ligne « Archives ignorées (déjà à jour) » quand il
+  y en a — on voit ainsi, sur un run courant, **ce qui a changé** et ce qui a été évité.
 - **Noms d'archives visibles** dans le log et le terminal, pour rendre le diagnostic possible
   (cf. §11).
 
@@ -313,7 +388,9 @@ Pour mémoire, la procédure à écrire puis tester :
 - `source/` ouvert en **lecture seule** : contrôle à prévoir (comparaison de la liste et des
   empreintes des fichiers avant/après une exécution).
 - Aucun secret versionné : `proton-drive`, `.venv/`, `logs/`, `source`, `backup` et les
-  fichiers de config locale sont dans `.gitignore`.
+  fichiers de config locale sont dans `.gitignore`. L'**historique** `.databackup-state.json`
+  y est ajouté *(I7)* : il ne contient **aucun secret** (noms d'archives, signatures, tailles,
+  dates) mais bien des **noms de dossiers personnels** — il reste donc local, comme les logs.
 - **Mot de passe des zips** : `.env` local non versionné (priorité à `DATABACKUP_ZIP_PASSWORD`),
   jamais dans le code, les logs ou la sortie d'exécution (cf. §7) ; conservé dans le
   gestionnaire de mots de passe de Yves.
@@ -332,7 +409,8 @@ Pour mémoire, la procédure à écrire puis tester :
 > **Le CDC v1 est figé** : toutes les questions des trois lots ont été tranchées avec Yves le
 > **2026-10-18**. Cette section n'est plus une liste de questions, mais l'index des décisions
 > (le détail vit dans les sections concernées). Toute évolution passe par le §13 ou une
-> nouvelle décision écrite ici.
+> nouvelle décision écrite ici. Les décisions de **v2** (sauvegarde incrémentale, I7) sont
+> consignées au **lot D** ci-dessous.
 
 **Socle**
 
@@ -358,13 +436,15 @@ Pour mémoire, la procédure à écrire puis tester :
 - Mot de passe dans **`.env` local non versionné** (priorité à `DATABACKUP_ZIP_PASSWORD`), déjà
   conservé dans le gestionnaire de mots de passe de Yves ; jamais dans le code ni les logs
   (§7, §11).
-- Options **`--dry-run`** et **`--limit N`** (§8).
+- Options **`--dry-run`**, **`--limit N`** et **`--full`** (§8).
 
 **Lot C — archive, échecs et restitution**
 
 - Un upload en échec est **compté en échec et le run continue** ; **aucun réessai automatique**
   (§6). **Aucune vérification post-transfert** : le code retour du CLI fait foi.
-- **Relancer repart de zéro** (aucun état persisté) — accepté en v1.
+- **Relance incrémentale** *(I7)* : seules les archives **non encore sauvegardées** (nouvelles,
+  modifiées, ou dont l'envoi a échoué) sont refaites ; l'historique local n'enregistre que les
+  transferts **réussis** (§6).
 - Fichier **disparu ou illisible** pendant l'archivage : **avertir et continuer** (§6).
 - **Restauration hors v1** (§10) : risque assumé (format validé localement en I3, pas le
   téléchargement), procédure à écrire et tester ensuite.
@@ -373,15 +453,40 @@ Pour mémoire, la procédure à écrire puis tester :
 - `timeout` du bouton Piloter : **1 h**, **confirmé** par le run réel du 2026-10-18 (14:25) ;
   premier run lancé **à la main**, aucun ajustement nécessaire (§8).
 
+**Lot D — sauvegarde incrémentale** *(décidé le 2026-10-18, livré en I7)*
+
+- **Signature par archive** = `sha256` de `chemin relatif + taille + mtime (ns)` des fichiers +
+  sous-dossiers vides ; le **contenu n'est jamais lu** (§6).
+- **Historique local** `.databackup-state.json` (non versionné, écriture atomique), **une entrée
+  par archive**, mise à jour **uniquement après un upload réussi** (§6, §7).
+- **Défaut sûr** : historique absent, illisible, dossier renommé ou `--full` → l'archive est
+  **incluse** ; perdre l'historique n'empêche jamais une sauvegarde, il ne fait que la refaire
+  entièrement (§6).
+- **`--limit N`** ne retient que les N **premières archives retenues** et n'inscrit que celles
+  réellement transférées (§6, §8).
+- **Signatures portées par le run** : le manifeste temporaire `backup/.databackup-manifest.json`
+  fige la signature des zips **réellement créés**, pour que l'historique décrive le contenu
+  **envoyé** et non l'état de `source/` au moment du transfert (§6).
+- **Limites assumées** : pas de détection d'une modification qui conserve **taille et date**, pas
+  de détection d'une archive **supprimée à la main** sur Proton, aucune **purge** de l'historique
+  (§2, §6, §13).
+
 **Vérifications réelles : faites** (2026-10-18) — ✅ premier run réel complet : **14:25** pour
 22 archives (4,63 Go), `photos.zip` (3,19 Go) en 9:01, **0 échec**, `backup/` vidé ; `timeout`
 Piloter de **1 h confirmé** (§5, §6, §8). Le CDC v1 est désormais **intégralement vérifié**.
+Le **lot D** (incrémental, I7) est vérifié par **110 tests** et par un run réel de contrôle :
+run complet **18:29** (19 archives, 4,49 Go, 0 échec) puis, juste après, run **0,2 s** —
+**22 archives ignorées**, aucune archive créée ni envoyée (§6, `TODO.md` I7).
 
 ## 13. Évolutions envisagées (hors v1)
 
 - **restauration** : procédure (téléchargement depuis Proton, déchiffrement, extraction),
   **test réel** associé, puis éventuelle commande outillée `./start.sh restore` (§10) ;
-- sauvegarde incrémentale avec historique daté (au lieu de l'écrasement) ;
+- **incrémental plus fin** : détection **par le contenu** des fichiers (hachage) et/ou à la
+  **maille du fichier** (n'envoyer qu'un delta), et **historique daté** côté distant — la v2
+  s'arrête volontairement à la maille du **dossier**, sur **métadonnées** (§2, §6, lot D) ;
+- **hygiène de l'historique** : purge des entrées dont l'archive n'existe plus, compactage,
+  commande d'affichage (`.databackup-state.json`) ;
 - suppression des archives orphelines (miroir strict de l'état local) ;
 - notification de fin (mail, notification bureau) ;
 - autres sources : photos hors `source`, dépôts Git, bases de données ;

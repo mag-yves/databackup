@@ -6,38 +6,35 @@
 
 ## État courant
 
-- **CDC v1 figé et intégralement vérifié en réel** (récap §12). **I1 à I6 livrés** (`all` =
-  scan → archive → transfert → nettoyage, **récapitulatif final**, **`backup/` vidé quoi qu'il
-  arrive**) ; **77 tests** verts, `ruff` propre ; `README.md` complet.
-- **Run réel complet** (2026-10-18) : **14:25**, **22 archives** (4,63 Go, **0 échec**),
-  `photos.zip` (3,19 Go) en 9:01 ; `timeout` Piloter **1 h confirmé** ; 22 archives uniques
-  côté Proton. Prérequis prêts : `proton-drive` 0.9.0, session active, destination, `.env`.
-- **La v1 est terminée** ; la suite est au backlog de `TODO.md` (Piloter, restauration…).
+- **I1 à I6 livrés et vérifiés** : run complet du 2026-10-18 en **14:25** (22 archives, 4,63 Go,
+  0 échec), `timeout` Piloter de 1 h confirmé (`cdc.md` §12).
+- **I7 livré et vérifié** (2026-10-18) : **sauvegarde incrémentale** (`cdc.md` §6, §12 lot D) —
+  **110 tests** verts, `ruff` propre, `README.md` à jour. Réel : run complet **18:29** (19
+  archives, 4,49 Go, 0 échec) puis run suivant **0,2 s** — **22 archives ignorées**, rien renvoyé.
 
 ## Décisions actées (détail au CDC §3–§8)
 
 - `source/` **lecture seule** ; un zip **AES-256** par dossier de premier niveau + `documents.zip`
   (racine) ; nommage normalisé, `ZIP_STORED` sur les formats compressés, aucun filtrage ;
-  `backup/` **vidé au début et à la fin de chaque run** (`scan`/`archive` seuls le laissent) ;
-  destination `/my-files/databackup` (`upload -f replace`), orphelines conservées.
+  `backup/` **vidé au début et à la fin de chaque run** (`scan`/`archive` seuls le laissent, avec
+  le manifeste) ; `/my-files/databackup` (`upload -f replace`), orphelines conservées.
 - Mot de passe dans **`.env`** (priorité `DATABACKUP_ZIP_PASSWORD` ; **en clair au CDC §4**,
   exception assumée §11), jamais journalisé ; échec d'upload → **on continue**.
-- **I1–I5** : `exec` + verrou `.databackup.lock` (repris si obsolète) ; `scan` = plan seul
-  (**collision → échec** `1`) ; `archive` = vidage avant, sous-dossiers vides conservés,
-  **date hors plage ZIP ramenée à 1980** (§6) ; `transfer` = `upload -f replace`, échec
-  **compté**, login + reprise **en TTY seulement** (**code `4`** sinon) ; `all` = chaîne
-  complète + **vidage final garanti** (succès, échec, annulation) + **récapitulatif** ;
-  `--limit N`, `--dry-run`.
+- **I7 — incrémental** : signature `sha256` (chemin + taille + mtime ; contenu jamais relu) ;
+  historique `.databackup-state.json` (non versionné, atomique) mis à jour **après un upload
+  réussi** seulement ; signature portée par le **manifeste** temporaire du run ; **défaut sûr**
+  (pas d'historique = complet) ; `--full` ; `--limit` n'inscrit que le traité.
+- **I1–I5** (socle, `scan`, `archive`, `transfer`, `all`) : détail au `cdc.md` §12 — inchangés par I7.
 
 ## Dette / points d'attention
 
-- Aucune dette de code ; ⚠️ pas de mot de passe en dur (contrairement à `autobackup`) ; ⚠️
-  `source` est **synchronisé par kDrive** (il peut bouger pendant une exécution).
-- ⚠️ `transfer` capture la sortie de `proton-drive` : **silence de 9 min** constaté sur
-  `photos.zip` — pas de progression **intra-upload** (CDC §9, amélioration possible).
+- Aucune dette de code ; ⚠️ pas de mot de passe en dur ; ⚠️ `source` **synchronisé par kDrive**.
+- ⚠️ Incrémental (§6) : modification **conservant taille et date** non vue ; archive **supprimée à
+  la main** sur Proton non renvoyée ; historique **jamais purgé**.
+- ⚠️ `transfer` : **silence de 9 min** constaté sur `photos.zip` — pas de progression
+  **intra-upload** (§9).
 
 ## Prochaines actions
 
-- 🔴 Backlog (cf. `TODO.md`) : **Piloter** (adaptateur `databackup-start.sh` + bouton
-  déclencheur, voire statut « en cours »), **restauration** (hors v1), progression
-  **intra-upload**, historique daté.
+- 🔴 Backlog (`TODO.md`) : **Piloter**, **restauration**, **hygiène de l'historique**,
+  progression intra-upload, historique daté.
