@@ -163,6 +163,24 @@ dans l'itération en cours part au backlog, il n'est pas codé « au passage ».
 
 ---
 
+## I8 — Configuration locale (`config.local`) ✅ **FAIT** (2026-11-14)
+
+- **Objectif** : remplacer les liens symboliques `source`/`backup` — propres à la machine,
+  fragiles au clone et invisibles dans la configuration — par un fichier `config.local`
+  (non versionné), sur le modèle déjà utilisé par `autobackup`.
+- **Livrable** : `config.local` (`SOURCE_DIR`, `BACKUP_DIR` en chemins absolus, dossier
+  temporaire des zips = `/media/yves/SSDBCK/temp/databackup`) ; lecture et **préflight** dans
+  `databackup.py` (`load_config`, `check_config`, code `1` si absent/incomplet/relatif) ;
+  messages d'erreur et documentation alignés (`cdc.md` §3, §6, §7, §11, §12 lot E,
+  `README.md`, `AGENTS.md`, `.gitignore`).
+- **DoD** : symlinks `source`/`backup` supprimés ; **117 tests** verts (7 nouveaux sur la
+  configuration), `ruff` propre ; `./start.sh scan` lit bien `SOURCE_DIR` et affiche le plan.
+- **Résultat** : `config.local` créé (`chmod 600`), symlinks supprimés, dossier
+  `/media/yves/SSDBCK/temp/databackup` créé. Aucun repli silencieux : un `config.local`
+  absent ou incomplet échoue explicitement avant tout traitement.
+
+---
+
 ## Backlog (hors v1 — ne pas coder sans décision actée au CDC §13)
 
 - **Piloter** (autre dépôt) : adaptateur `piloter/scripts/databackup-start.sh` + bouton

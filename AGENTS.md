@@ -47,11 +47,12 @@ aujourd'hui le projet n'a que sa documentation et son outillage de référence.
 - `TODO.md` — itérations prévues, avec objectif et critère de fin.
 - `usage-proton-drive-cli.md` — aide de l'exécutable `proton-drive`.
 - `install.sh` — téléchargement du binaire `proton-drive` dans le projet.
+- `config.local` — chemins de la machine (`SOURCE_DIR`, `BACKUP_DIR`), **non versionné**.
 - `logs/` — logs horodatés (rotation prévue : les N derniers).
 - `time-tracker/` — suivi du temps (`devtime`) : `log.json` est **versionné**.
 - `.opencode/commands/` — commandes projet `/time-*`.
-- **Non versionné** : `proton-drive` (binaire, ~93 Mo), `.venv/`, `logs/`, secrets de config,
-  `.databackup-state.json` (historique de l'incrémental, cf. `cdc.md` §6).
+- **Non versionné** : `proton-drive` (binaire, ~93 Mo), `.venv/`, `logs/`, `config.local`,
+  `.env`, `.databackup-state.json` (historique de l'incrémental, cf. `cdc.md` §6).
 
 ## Pièges à connaître
 
@@ -59,6 +60,9 @@ aujourd'hui le projet n'a que sa documentation et son outillage de référence.
   s'exécuter sans l'utilisateur devant l'écran. Le script ne fait ni `login` ni `logout`
   systématique : il tente une reconnexion **seulement après un échec** d'upload.
 - **Le binaire `proton-drive` n'est pas versionné** : après un clone, lancer `./install.sh`.
+- **Aucun symlink `source`/`backup`** (abandonnés le 2026-11-14) : les chemins viennent de
+  `config.local` (`SOURCE_DIR`/`BACKUP_DIR`, absolus). Un `config.local` absent ou incomplet
+  échoue explicitement (code `1`) avant tout traitement.
 - **Mot de passe d'archive** : `autobackup` le garde encore en dur dans son code (dette
   connue) — **ne pas reproduire** ce choix ici ; le CDC §7 et §11 fixent l'emplacement.
 - **Volume des transferts** : Proton a un quota ; vérifier l'espace avant une grosse

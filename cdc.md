@@ -8,10 +8,11 @@
 
 ## 1. Objectif
 
-Sauvegarder les documents du dossier `source` vers **Proton Drive**, sous forme d'**une
-archive zip chiffrée par dossier** de premier niveau. L'objectif est une sauvegarde **hors
-site** simple, rejouable à la main, sans synchronisation bidirectionnelle. Depuis I7, seuls
-les dossiers **modifiés** sont recompressés et renvoyés (sauvegarde **incrémentale**, §6).
+Sauvegarder les documents du dossier source (déclaré par `SOURCE_DIR` dans `config.local`,
+cf. §7) vers **Proton Drive**, sous forme d'**une archive zip chiffrée par dossier** de premier
+niveau. L'objectif est une sauvegarde **hors site** simple, rejouable à la main, sans
+synchronisation bidirectionnelle. Depuis I7, seuls les dossiers **modifiés** sont recompressés et
+renvoyés (sauvegarde **incrémentale**, §6).
 
 ## 2. Périmètre
 
@@ -19,10 +20,10 @@ les dossiers **modifiés** sont recompressés et renvoyés (sauvegarde **incrém
 
 **v1**
 
-- Lecture de **tout** le contenu de `source/` (symlink → `/home/yves/kDrive/Personnel`),
-  **en lecture seule** ;
-- **un zip chiffré par dossier** de premier niveau sous `source/` ;
-- **un zip** `documents.zip` pour les fichiers posés directement à la racine de `source/` ;
+- Lecture de **tout** le contenu du dossier source (`SOURCE_DIR` dans `config.local`, aujourd'hui
+  `/home/yves/kDrive/Personnel`), **en lecture seule** ;
+- **un zip chiffré par dossier** de premier niveau du dossier source ;
+- **un zip** `documents.zip` pour les fichiers posés directement à la racine du dossier source ;
 - chiffrement **AES-256**, mot de passe unique (cf. §4) ;
 - transfert vers **`/my-files/databackup`**, **écrasement** des archives distantes de même
   nom (cf. §5) ;
@@ -52,13 +53,13 @@ les dossiers **modifiés** sont recompressés et renvoyés (sauvegarde **incrém
 
 | Élément | Décision |
 |---|---|
-| Racine | `source/` → **`/home/yves/kDrive/Personnel`** (symlink non versionné) |
+| Racine | Dossier **`SOURCE_DIR`** déclaré dans `config.local` (non versionné) — aujourd'hui **`/home/yves/kDrive/Personnel`** |
 | Droits | **Lecture seule, absolue** : aucun fichier de `source` n'est modifié, déplacé ou supprimé |
 | Unité sauvegardée | **chaque dossier de premier niveau** = une archive, **récursive** (toute la profondeur : jusqu'à 7 niveaux aujourd'hui) |
 | Fichiers à la racine | regroupés dans **`documents.zip`** |
 | Sous-dossier d'un dossier | inclus dans l'archive du dossier parent (pas d'archive par sous-dossier) |
 | Dossiers vides | **pas d'archive** pour un dossier de premier niveau vide ; **dans** une archive, les sous-dossiers vides sont **conservés** (arborescence fidèle). *(les 2 dossiers vides relevés sont imbriqués, aucun au premier niveau)* |
-| Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine `source/` est elle-même un lien, résolu une fois ; **1 lien interne relevé le 2026-10-18** dans `Prusa/Modèles/02 en cours/Zetests` — ignoré et signalé)* |
+| Liens symboliques internes | **ignorés**, avec un **avertissement dans le log** (aucun suivi de lien : évite les boucles et les sorties de périmètre). *(la racine source est un dossier ordinaire, désormais déclarée par `SOURCE_DIR` ; **1 lien interne relevé le 2026-10-18** dans `Prusa/Modèles/02 en cours/Zetests` — ignoré et signalé)* |
 | Fichiers temporaires | **inclus** : le script **ne filtre rien** (y compris `Compta Homebank.xhb~` et les `.bak` datés) |
 | Fichiers cachés (`.…`) | **inclus** *(aucun aujourd'hui à la racine)* |
 | Fichiers modifiés pendant l'exécution | **avertir et continuer** : le zip contient la version lue au moment de l'archivage ; un fichier disparu ou illisible est **signalé dans le log** et n'interrompt pas le dossier (il sera repris au run suivant) |
@@ -156,17 +157,18 @@ collision**. Les fichiers de la racine vont dans `documents.zip`.
 
 ## 6. Processus (déroulé d'une exécution)
 
-1. **Contrôle** — le disque de `backup/` est monté et accessible en écriture, sinon échec
-   explicite (`backup/` → `/media/yves/SSDBCK/temp/backup`).
-2. **Nettoyage** — `backup/` est **vidé** avant toute chose (il est temporaire).
-3. **Scan** — dossiers de premier niveau de `source/` retenus + fichiers racine ; les
+1. **Contrôle** — le dossier **`BACKUP_DIR`** (déclaré dans `config.local`, aujourd'hui
+   `/media/yves/SSDBCK/temp/databackup`) est monté et accessible en écriture, sinon échec
+   explicite (code `3`).
+2. **Nettoyage** — `BACKUP_DIR` est **vidé** avant toute chose (il est temporaire).
+3. **Scan** — dossiers de premier niveau de `SOURCE_DIR` retenus + fichiers racine ; les
    dossiers vides sont écartés ; toute **collision de noms d'archives** arrête le scan (§4) ;
    chaque archive est comparée à **l'historique** : seule une archive **nouvelle ou modifiée**
    est retenue (cf. « Sauvegarde incrémentale » ci-dessous).
-4. **Archives** — création des zips chiffrés **des seules archives retenues** dans `backup/`.
-5. **Transfert** — envoi des zips de `backup/` vers `/my-files/databackup`, un `upload` par
+4. **Archives** — création des zips chiffrés **des seules archives retenues** dans `BACKUP_DIR`.
+5. **Transfert** — envoi des zips de `BACKUP_DIR` vers `/my-files/databackup`, un `upload` par
    zip ; **l'historique n'est mis à jour qu'après un upload réussi** (cf. ci-dessous).
-6. **Nettoyage final** — `backup/` est vidé **quoi qu'il arrive** (détail ci-dessous).
+6. **Nettoyage final** — `BACKUP_DIR` est vidé **quoi qu'il arrive** (détail ci-dessous).
 
 ### Sauvegarde incrémentale — historique local *(décidé le 2026-10-18, livré en I7)*
 
@@ -181,10 +183,10 @@ absent, illisible, dossier renommé, option `--full` — l'archive est **incluse
   sous-dossiers vides. Le **contenu n'est jamais lu** : l'arborescence est parcourue (métadonnées
   seules, quelques secondes) mais seules les archives **nouvelles ou modifiées** sont ensuite
   compressées puis envoyées — le coût CPU et réseau disparaît pour les dossiers inchangés.
-- **Signature au moment de l'archivage** : un **manifeste** (`backup/.databackup-manifest.json`,
+- **Signature au moment de l'archivage** : un **manifeste** (`BACKUP_DIR/.databackup-manifest.json`,
   fichier **temporaire** comme les archives) porte la signature des zips réellement créés. Le
   transfert s'en sert pour l'historique : la signature inscrite est donc celle du contenu
-  **réellement envoyé**, et non l'état de `source/` au moment du transfert — `source/` est
+  **réellement envoyé**, et non l'état de `SOURCE_DIR` au moment du transfert — `SOURCE_DIR` est
   synchronisé par kDrive et peut bouger entre l'archivage et l'envoi.
 - **Historique** : `.databackup-state.json` à la racine du projet, **non versionné** (comme
   `.env` et `.databackup.lock`, cf. §7 et §11), écrit de façon **atomique** (fichier temporaire
@@ -205,13 +207,13 @@ absent, illisible, dossier renommé, option `--full` — l'archive est **incluse
 
 ✅ **Mesuré en réel le 2026-10-18** : run complet **18:29** pour 19 archives (4,49 Go, 0 échec,
 3 archives ignorées) — puis, **immédiatement après**, run **0,2 s** : **22 archives ignorées**,
-aucune archive créée ni envoyée, `backup/` vide, code retour `0`. Le gain de l'incrémental est
+aucune archive créée ni envoyée, `BACKUP_DIR` vide, code retour `0`. Le gain de l'incrémental est
 donc bien celui de l'archivage et du transfert ; la durée d'un run **complet** dépend du débit
 réseau (14:25 pour le premier run du même jour, 18:29 pour celui-ci, à volume comparable).
 
-### Nettoyage du dossier temporaire `backup/` *(règle ferme, confirmée le 2026-10-18)*
+### Nettoyage du dossier temporaire `BACKUP_DIR` *(règle ferme, confirmée le 2026-10-18)*
 
-`backup/` est **temporaire par nature** : il ne doit **jamais** rester des archives dedans
+`BACKUP_DIR` est **temporaire par nature** : il ne doit **jamais** rester des archives dedans
 après un traitement. Garanties attendues :
 
 - **vidé au début** de chaque run (étape 2) : c'est ce qui rattrape un run interrompu
@@ -223,13 +225,13 @@ après un traitement. Garanties attendues :
   - **annulation** par `SIGTERM` / `SIGINT` (timeout Piloter, `Ctrl-C`, clic sur la tuile) ;
 - **vidé par l'étape `cleanup`** appelée seule ;
 - **exception voulue** : `scan` et `archive` **seuls** laissent volontairement les archives
-  dans `backup/` — c'est le principe même de l'étape (compresser d'abord, transférer ensuite
+  dans `BACKUP_DIR` — c'est le principe même de l'étape (compresser d'abord, transférer ensuite
   avec `transfer`). Le vidage n'intervient que sur `cleanup` ou en fin de `all` ; le
   **manifeste** du run (cf. « Sauvegarde incrémentale ») y reste aussi, car le `transfer`
   ultérieur en a besoin pour l'historique ;
 - si le vidage est impossible (disque démonté pendant le run), le run **échoue** avec un
   message explicite (`3`) et **rien d'autre n'est supprimé** — on ne touche jamais à
-  `source/` ni à Proton ;
+  `SOURCE_DIR` ni à Proton ;
 - **`SIGKILL`** (inatteignable proprement) : aucune garantie possible, c'est le vidage du
   début du run suivant qui nettoie.
 
@@ -260,24 +262,35 @@ archives dont l'envoi avait échoué (aucune trace enregistrée pour elles).
   l'envoi précédent a échoué — sont refaites ; l'historique local ne retient que les transferts
   **réussis** (cf. « Sauvegarde incrémentale »). Il reste **supprimable à tout moment** : sans
   lui, le run suivant est simplement complet.
-- Espace disque : jusqu'à ~4,8 Go dans `backup/` (677 Go libres sur SSDBCK au 2026-10-18) —
+- Espace disque : jusqu'à ~4,8 Go dans `BACKUP_DIR` (677 Go libres sur SSDBCK au 2026-10-18) —
   aucun garde-fou dédié, l'échec d'écriture restant un échec explicite.
 
 ✅ **Première validation réelle** (2026-10-18) : run complet en **14:25** — 22 archives créées
-(4,63 Go), 22 envoyées, **0 échec**, `backup/` vidé, code retour `0` (dont `photos.zip`
+(4,63 Go), 22 envoyées, **0 échec**, `BACKUP_DIR` vidé, code retour `0` (dont `photos.zip`
 = 3,19 Go, 9:01).
 
 ## 7. Configuration
 
-- Les chemins machine sont portés par des **symlinks non versionnés** (`source/`, `backup/`),
-  comme dans `autobackup` — décision conservée : ils fonctionnent et restent propres à la
-  machine (les alternatives par variables d'environnement n'apportent rien ici).
+- Les chemins machine sont portés par un fichier **`config.local`** à la racine du projet,
+  **non versionné** (comme `.env`), au format `KEY=valeur` :
+  - **`SOURCE_DIR`** : dossier des documents à sauvegarder (lecture seule) — aujourd'hui
+    `/home/yves/kDrive/Personnel` ;
+  - **`BACKUP_DIR`** : dossier temporaire des zips avant transfert — aujourd'hui
+    `/media/yves/SSDBCK/temp/databackup`.
+  - **Préflight obligatoire** : fichier absent, clé manquante ou chemin relatif ⇒ **échec
+    explicite** (code `1`) nommant la clé à corriger, avant tout traitement. Ce fichier peut
+    se recréer à la main après un clone : il ne contient **aucun secret** (seulement des
+    chemins locaux, propres à la machine).
+  - ⚠️ **Décision du 2026-11-14** : les liens symboliques `source`/`backup` sont **abandonnés**
+    (fragiles au clone et invisibles dans la configuration). `config.local` reprend exactement
+    le mécanisme d'`autobackup` (`SOURCE_DIR`/`BACKUP_DIR`), pour un comportement identique
+    d'un projet à l'autre.
 - Destination Proton : `/my-files/databackup` (constante de projet, pas un secret).
 - **Historique des sauvegardes** *(I7)* : **`.databackup-state.json`** à la racine du projet —
   fichier **local non versionné** (mêmes règles que `.env` et `.databackup.lock`), qui ne contient
   **aucun secret** (noms d'archives, signatures, tailles, dates). Il peut être **supprimé à tout
   moment** : la sauvegarde suivante est alors simplement complète. Le **manifeste** du run en cours
-  (`backup/.databackup-manifest.json`) est, lui, un **déchet temporaire** comme les archives
+  (`BACKUP_DIR/.databackup-manifest.json`) est, lui, un **déchet temporaire** comme les archives
   (vidé avec elles, cf. §6).
 - **Mot de passe des archives : hors du code** *(décidé le 2026-10-18)*. `autobackup` le
   garde en dur (dette connue, à ne pas reproduire ici).
@@ -302,7 +315,7 @@ archives dont l'envoi avait échoué (aucune trace enregistrée pour elles).
   transfert réel sans envoyer 4,8 Go. Les deux sont transmis au module par `start.sh`.
 - **`--full`** *(I7)* : **ignorer l'historique** et refaire toutes les archives, comme avant
   l'incrémental (dépannage, test, ou après une restauration). Disponible sur `scan`, `archive`
-  et `all` — `transfer` n'en a pas besoin : il envoie ce qui est dans `backup/`.
+  et `all` — `transfer` n'en a pas besoin : il envoie ce qui est dans `BACKUP_DIR`.
 
 ### Contrat de `start.sh` — compatible Piloter
 
@@ -317,14 +330,14 @@ l'extension **Piloter** (même approche qu'`autobackup`).
   attente clavier.
 - **Code retour exploitable** : `0` = succès complet, non nul = échec (Piloter ne distingue
   que ces deux cas). Codes distincts pour l'usage manuel : `1` échec générique (archivage ou
-  transfert), `2` argument invalide, `3` dossier `backup/` indisponible (disque non monté),
+  transfert), `2` argument invalide, `3` dossier `BACKUP_DIR` indisponible (disque non monté),
   `4` authentification Proton requise, `5` sauvegarde déjà en cours (verrou).
 - **Verrou `.databackup.lock`** (PID) : un second lancement est **refusé** avec le code `5`
   et un message clair. Il sert aussi de **témoin d'activité** (base d'un futur statut Piloter
   « sauvegarde en cours ») et est retiré en fin de run, y compris après une annulation.
 - **Annulable** : sur `SIGTERM` / `SIGINT` (timeout Piloter, clic sur la tuile « en cours »,
   `Ctrl-C`), arrêt propre — le processus `proton-drive` en cours est terminé, le dossier
-  `backup/` est **vidé** (comme en fin de run normal, cf. §6), le verrou est libéré, le code
+  `BACKUP_DIR` est **vidé** (comme en fin de run normal, cf. §6), le verrou est libéré, le code
   retour est non nul. Aucun processus détaché ne doit survivre.
 - **Sortie ligne par ligne sur la sortie standard** (le journal de Piloter en garde 500
   lignes) : étapes, compteur `[n/total]`, nom d'archive, taille, durée. **Jamais de secret**
@@ -340,7 +353,7 @@ l'extension **Piloter** (même approche qu'`autobackup`).
   *(décidé le 2026-10-18, comme `autobackup`)*. ✅ **Confirmé par la mesure du 2026-10-18** :
   run complet à froid en **14:25** (≈ 4,8 Go) — le timeout de 1 h laisse une large marge,
   **aucun ajustement nécessaire**. Un run coupé par le `timeout` n'est pas perdu : arrêt propre,
-  verrou libéré, `backup/` vidé, il suffit de relancer.
+  verrou libéré, `BACKUP_DIR` vidé, il suffit de relancer.
 - Optionnel, plus tard : `piloter/scripts/databackup-status.sh` lisant `.databackup.lock`
   pour afficher « en cours ».
 - **Aucune planification** *(décision définitive du 2026-10-18)* : ni cron, ni timer systemd.
@@ -385,9 +398,9 @@ Pour mémoire, la procédure à écrire puis tester :
 
 ## 11. Sécurité et données personnelles
 
-- `source/` ouvert en **lecture seule** : contrôle à prévoir (comparaison de la liste et des
+- `SOURCE_DIR` ouvert en **lecture seule** : contrôle à prévoir (comparaison de la liste et des
   empreintes des fichiers avant/après une exécution).
-- Aucun secret versionné : `proton-drive`, `.venv/`, `logs/`, `source`, `backup` et les
+- Aucun secret versionné : `proton-drive`, `.venv/`, `logs/`, `config.local` et les
   fichiers de config locale sont dans `.gitignore`. L'**historique** `.databackup-state.json`
   y est ajouté *(I7)* : il ne contient **aucun secret** (noms d'archives, signatures, tailles,
   dates) mais bien des **noms de dossiers personnels** — il reste donc local, comme les logs.
@@ -414,7 +427,7 @@ Pour mémoire, la procédure à écrire puis tester :
 
 **Socle**
 
-- `source/` en **lecture seule absolue**, dossier temporaire `backup/` (§3, §6) : **vidé au
+- `SOURCE_DIR` en **lecture seule absolue**, dossier temporaire `BACKUP_DIR` (§3, §6) : **vidé au
   début et à la fin de chaque run** — succès, échec ou annulation — sauf `scan`/`archive`
   lancés seuls, qui le laissent volontairement en place pour un `transfer` ultérieur.
 - **Un zip par dossier de premier niveau** + **`documents.zip`** pour les fichiers racine (§3).
@@ -464,15 +477,27 @@ Pour mémoire, la procédure à écrire puis tester :
   entièrement (§6).
 - **`--limit N`** ne retient que les N **premières archives retenues** et n'inscrit que celles
   réellement transférées (§6, §8).
-- **Signatures portées par le run** : le manifeste temporaire `backup/.databackup-manifest.json`
+- **Signatures portées par le run** : le manifeste temporaire `BACKUP_DIR/.databackup-manifest.json`
   fige la signature des zips **réellement créés**, pour que l'historique décrive le contenu
-  **envoyé** et non l'état de `source/` au moment du transfert (§6).
+  **envoyé** et non l'état de `SOURCE_DIR` au moment du transfert (§6).
 - **Limites assumées** : pas de détection d'une modification qui conserve **taille et date**, pas
   de détection d'une archive **supprimée à la main** sur Proton, aucune **purge** de l'historique
   (§2, §6, §13).
 
+**Lot E — configuration locale** *(décidé le 2026-11-14)*
+
+- **Les liens symboliques `source`/`backup` sont supprimés** : les chemins machine vivent
+  dans **`config.local`** (non versionné, format `KEY=valeur`, cf. §7).
+- **`SOURCE_DIR`** = documents à sauvegarder (lecture seule) ; **`BACKUP_DIR`** = dossier
+  temporaire des zips (aujourd'hui `/media/yves/SSDBCK/temp/databackup`).
+- **Préflight obligatoire** : `config.local` absent, incomplet ou avec un chemin relatif →
+  **échec explicite** (code `1`) nommant la clé, avant toute écriture. Le `BACKUP_DIR` absent
+  ou non inscriptible reste le code `3`.
+- Convention alignée sur `autobackup` (`SOURCE_DIR`/`BACKUP_DIR`) pour un comportement
+  identique d'un projet à l'autre.
+
 **Vérifications réelles : faites** (2026-10-18) — ✅ premier run réel complet : **14:25** pour
-22 archives (4,63 Go), `photos.zip` (3,19 Go) en 9:01, **0 échec**, `backup/` vidé ; `timeout`
+22 archives (4,63 Go), `photos.zip` (3,19 Go) en 9:01, **0 échec**, `BACKUP_DIR` vidé ; `timeout`
 Piloter de **1 h confirmé** (§5, §6, §8). Le CDC v1 est désormais **intégralement vérifié**.
 Le **lot D** (incrémental, I7) est vérifié par **110 tests** et par un run réel de contrôle :
 run complet **18:29** (19 archives, 4,49 Go, 0 échec) puis, juste après, run **0,2 s** —

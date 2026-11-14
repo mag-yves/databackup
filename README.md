@@ -7,7 +7,8 @@ synchronisation bidirectionnelle. La référence fonctionnelle est le cahier des
 
 ## Principe
 
-- `source/` est lu **en lecture seule** : jamais modifié, déplacé ni supprimé.
+- Le dossier source (`SOURCE_DIR`, cf. « Installation ») est lu **en lecture seule** : jamais
+  modifié, déplacé ni supprimé.
 - Chaque **dossier de premier niveau** donne une archive (`Photos` → `photos.zip`, …) ; les
   fichiers posés à la racine vont dans **`documents.zip`**.
 - Les archives sont **chiffrées AES-256** avec un **mot de passe unique**, et **envoyées** vers
@@ -54,15 +55,20 @@ Concrètement :
    ./install.sh
    ```
 
-3. **Liens vers les dossiers de la machine** (propres à la machine, non versionnés) :
+3. **Chemins de la machine** — fichier `config.local` local (non versionné) :
 
    ```bash
-   ln -s /chemin/vers/mes/documents source
-   ln -s /chemin/vers/disque/backup backup
+   cat > config.local <<'EOF'
+   SOURCE_DIR=/chemin/vers/mes/documents
+   BACKUP_DIR=/chemin/vers/disque/databackup
+   EOF
+   chmod 600 config.local
    ```
 
-   `source/` = les documents à sauvegarder ; `backup/` = dossier **temporaire** (vidé à chaque
-   run), sur un disque disposant de la place.
+   `SOURCE_DIR` = les documents à sauvegarder (lecture seule) ; `BACKUP_DIR` = dossier
+   **temporaire** (vidé à chaque run), sur un disque disposant de la place. Les deux chemins
+   doivent être **absolus** ; le programme refuse de démarrer si le fichier est absent ou
+   incomplet (message nommant la clé à corriger).
 
 4. **Mot de passe des archives** — fichier `.env` local (non versionné) :
 
@@ -97,14 +103,14 @@ Concrètement :
 | Commande | Effet |
 |---|---|
 | `scan` | Affiche le plan : dossiers **nouveaux / modifiés / inchangés**, noms d'archives, volume estimé — **n'écrit rien**. |
-| `archive` | Crée dans `backup/` les archives chiffrées **des dossiers nouveaux ou modifiés** (dossier vidé **avant**). |
-| `transfer` | Envoie les archives de `backup/` vers Proton Drive, puis met à jour l'historique. |
-| `cleanup` | Vide `backup/`. |
-| `all` | `scan` → `archive` → `transfer`, puis vide `backup/` (**défaut**). |
+| `archive` | Crée dans le dossier temporaire (`BACKUP_DIR`) les archives chiffrées **des dossiers nouveaux ou modifiés** (dossier vidé **avant**). |
+| `transfer` | Envoie les archives du dossier temporaire vers Proton Drive, puis met à jour l'historique. |
+| `cleanup` | Vide le dossier temporaire. |
+| `all` | `scan` → `archive` → `transfer`, puis vide le dossier temporaire (**défaut**). |
 
 | Option | Effet |
 |---|---|
-| `--dry-run` | Affiche le plan sans rien écrire dans `backup/` ni rien envoyer. |
+| `--dry-run` | Affiche le plan sans rien écrire dans le dossier temporaire ni rien envoyer. |
 | `--limit N` | Ne traite que les **N premiers dossiers** (`scan`, `archive`, `all`) — test sans envoyer 5 Go. |
 | `--full` | **Ignore l'historique** : refait toutes les archives (`scan`, `archive`, `all`). |
 
@@ -114,13 +120,13 @@ Concrètement :
 ./start.sh scan --limit 3   # les 3 premiers dossiers seulement
 ./start.sh all --limit 2    # test réel (archivage + envoi) sur 2 dossiers
 ./start.sh all --full       # tout refaire, comme si l'historique n'existait pas
-./start.sh cleanup          # vide backup/ (déjà vide à la fin d'un « all » réussi)
+./start.sh cleanup          # vide le dossier temporaire (déjà vide à la fin d'un « all » réussi)
 ```
 
 `./start.sh` crée l'environnement virtuel et installe les dépendances au premier lancement.
 
-`archive` seul **laisse** ses archives dans `backup/` (pour un `transfer` ultérieur) ; `all` les
-envoie puis **vide** `backup/` quoi qu'il arrive. `scan` seul ne touche à rien.
+`archive` seul **laisse** ses archives dans le dossier temporaire (pour un `transfer` ultérieur) ;
+`all` les envoie puis **vide** ce dossier quoi qu'il arrive. `scan` seul ne touche à rien.
 
 Un run courant n'envoie donc **que ce qui a changé** : la première fois tout part, ensuite
 quelques secondes suffisent si rien n'a bougé. L'historique vit dans `.databackup-state.json`
@@ -132,9 +138,9 @@ simplement complet.
 | Code | Signification |
 |---|---|
 | `0` | Succès complet. |
-| `1` | Échec générique : archivage, transfert, ou collision de noms d'archives. |
+| `1` | Échec générique : archivage, transfert, collision de noms d'archives ou `config.local` absent/invalide. |
 | `2` | Argument invalide. |
-| `3` | Dossier `backup/` indisponible (disque non monté ?). |
+| `3` | Dossier `BACKUP_DIR` indisponible (disque non monté ?). |
 | `4` | Authentification Proton requise — lancez `./proton-drive auth login` dans un terminal. |
 | `5` | Sauvegarde déjà en cours (verrou `.databackup.lock`). |
 
@@ -150,7 +156,7 @@ simplement complet.
 ## Annulation
 
 Sur `SIGTERM` / `SIGINT` (timeout, `Ctrl-C`) : arrêt propre — le transfert en cours est
-interrompu, `backup/` est vidé, le verrou est libéré. Il suffit de relancer.
+interrompu, le dossier temporaire est vidé, le verrou est libéré. Il suffit de relancer.
 
 ## Utilisation via Piloter
 
@@ -179,7 +185,10 @@ Les archives sont des **zip AES-256 standard**, ouvrables avec le mot de passe :
 
 - **Code `5`** (« déjà en cours ») : un run tourne, ou un verrou est resté après un `kill -9`.
   Un verrou laissé par un processus disparu est **repris automatiquement** au lancement suivant.
-- **Code `3`** : le disque de `backup/` n'est pas monté (ou le lien `backup` est cassé).
+- **Code `3`** : le dossier `BACKUP_DIR` (cf. `config.local`) est absent ou son disque n'est
+  pas monté.
+- **« Configuration absente / incomplète »** : `config.local` manque ou ne déclare pas
+  `SOURCE_DIR` et `BACKUP_DIR` en chemins absolus ; le message indique la clé à corriger.
 - **« Aucune archive à créer » / lignes « [inchangé] »** : c'est l'incrémental qui fonctionne —
   ces dossiers sont identiques à leur dernière sauvegarde **réussie**. Pour tout refaire :
   `./start.sh all --full`.
@@ -187,7 +196,8 @@ Les archives sont des **zip AES-256 standard**, ouvrables avec le mot de passe :
   est **complet** (l'historique est réécrit à la fin). Le supprimer donne exactement le même
   effet, sans risque.
 - **« Manifeste absent pour N archive(s) »** : `transfer` a envoyé des archives dont il ne
-  connaissait pas la signature (archives copiées à la main dans `backup/`, ou manifeste effacé) :
+  connaissait pas la signature (archives copiées à la main dans le dossier temporaire, ou
+  manifeste effacé) :
   rien n'est enregistré, elles seront refaites. Utiliser `all`, ou `archive` puis `transfer` dans
   la même exécution.
 - **« date de modification hors plage ZIP »** : un fichier est daté avant 1980 ; il est archivé
