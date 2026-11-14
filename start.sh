@@ -5,7 +5,7 @@
 # module Python en transmettant les arguments.
 #
 # Contrat (cf. cdc.md §8) : sans TTY (aucun prompt), codes retour exploitables
-# (0 succès, 1 échec, 2 argument invalide, 3 backup/ indisponible, 4 auth Proton
+# (0 succès, 1 échec, 2 argument invalide, 3 BACKUP_DIR indisponible, 4 auth Proton
 # requise, 5 sauvegarde déjà en cours), sortie ligne à ligne sur la sortie standard,
 # annulable (SIGTERM / SIGINT).
 #

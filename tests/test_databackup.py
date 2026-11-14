@@ -35,6 +35,9 @@ def sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(databackup, "LOGS_DIR", tmp_path / "logs")
     monkeypatch.setattr(databackup, "LOCK_FILE", tmp_path / ".databackup.lock")
     monkeypatch.setattr(databackup, "ENV_FILE", tmp_path / ".env")
+    config = tmp_path / "config.local"
+    config.write_text(f"SOURCE_DIR={source}\nBACKUP_DIR={backup}\n", encoding="utf-8")
+    monkeypatch.setattr(databackup, "CONFIG_FILE", config)
     # Un run ``all``/``archive`` exige un mot de passe (I3) : la fixture en fournit un.
     monkeypatch.setenv(databackup.PASSWORD_ENV_VAR, "mot-de-passe-de-test")
     return tmp_path
@@ -45,6 +48,11 @@ def isolated_project(tmp_path: Path) -> Path:
     """Copie le module dans un dossier temporaire (PROJECT_DIR = ce dossier)."""
     shutil.copy(MODULE_PATH, tmp_path / "databackup.py")
     (tmp_path / "backup").mkdir()
+    (tmp_path / "source").mkdir()
+    (tmp_path / "config.local").write_text(
+        f"SOURCE_DIR={tmp_path / 'source'}\nBACKUP_DIR={tmp_path / 'backup'}\n",
+        encoding="utf-8",
+    )
     return tmp_path
 
 
@@ -136,6 +144,47 @@ class TestLogging:
 
         remaining = sorted(p.name for p in logs_dir.glob("databackup-*.log"))
         assert len(remaining) == 4  # les 3 anciens + le nouveau
+
+
+# --- Configuration locale (config.local) -----------------------------------
+
+
+class TestConfiguration:
+    def test_load_config_reads_keys(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.local"
+        config.write_text(
+            "# commentaire ignoré\nexport SOURCE_DIR = '/documents'\nBACKUP_DIR=/tmp/zips\n",
+            encoding="utf-8",
+        )
+        assert databackup.load_config(config) == {"SOURCE_DIR": "/documents", "BACKUP_DIR": "/tmp/zips"}
+
+    def test_load_config_absent_is_empty(self, tmp_path: Path) -> None:
+        assert databackup.load_config(tmp_path / "absent") == {}
+
+    def test_check_config_accepts_valid_file(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.local"
+        config.write_text(f"SOURCE_DIR={tmp_path}\nBACKUP_DIR={tmp_path}\n", encoding="utf-8")
+        databackup.check_config(config)  # ne lève pas
+
+    def test_check_config_rejects_missing_file(self, tmp_path: Path) -> None:
+        with pytest.raises(databackup.ConfigurationError, match="Configuration absente"):
+            databackup.check_config(tmp_path / "absent")
+
+    def test_check_config_rejects_missing_key(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.local"
+        config.write_text(f"SOURCE_DIR={tmp_path}\n", encoding="utf-8")
+        with pytest.raises(databackup.ConfigurationError, match="BACKUP_DIR manquant"):
+            databackup.check_config(config)
+
+    def test_check_config_rejects_relative_path(self, tmp_path: Path) -> None:
+        config = tmp_path / "config.local"
+        config.write_text("SOURCE_DIR=documents\nBACKUP_DIR=/tmp/zips\n", encoding="utf-8")
+        with pytest.raises(databackup.ConfigurationError, match="chemin absolu"):
+            databackup.check_config(config)
+
+    def test_main_fails_cleanly_without_config(self, sandbox: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(databackup, "CONFIG_FILE", sandbox / "absent")
+        assert databackup.main(["scan"]) == databackup.EXIT_ERROR
 
 
 # --- Mot de passe des archives ---------------------------------------------

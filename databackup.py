@@ -5,11 +5,11 @@
 
 - ``scan`` : recense les dossiers de premier niveau et les fichiers racine à sauvegarder,
   en comparant chacun à l'historique (incrémental) ;
-- ``archive`` : crée un zip chiffré AES-256 par dossier **nouveau ou modifié** dans ``backup/`` ;
-- ``transfer`` : envoie les zips de ``backup/`` vers Proton Drive, puis inscrit dans
+- ``archive`` : crée un zip chiffré AES-256 par dossier **nouveau ou modifié** dans ``BACKUP_DIR`` ;
+- ``transfer`` : envoie les zips de ``BACKUP_DIR`` vers Proton Drive, puis inscrit dans
   l'historique les seules archives **réellement transférées** ;
-- ``cleanup`` : vide ``backup/`` ;
-- ``all`` : scan → archive → transfer, puis vidage de ``backup/`` (défaut).
+- ``cleanup`` : vide ``BACKUP_DIR`` ;
+- ``all`` : scan → archive → transfer, puis vidage de ``BACKUP_DIR`` (défaut).
 
 **Sauvegarde incrémentale** (``cdc.md`` §6) : une archive est ignorée **uniquement** si sa
 signature (chemins, tailles, dates de modification — sans lire le contenu) est identique à celle
@@ -41,11 +41,13 @@ import pyzipper
 # --- Configuration ----------------------------------------------------------
 
 PROJECT_DIR = Path(__file__).resolve().parent
-SOURCE_DIR = PROJECT_DIR / "source"
-BACKUP_DIR = PROJECT_DIR / "backup"
+CONFIG_FILE = PROJECT_DIR / "config.local"  # chemins de la machine (non versionné, cdc.md §7)
 LOGS_DIR = PROJECT_DIR / "logs"
 LOCK_FILE = PROJECT_DIR / ".databackup.lock"
 ENV_FILE = PROJECT_DIR / ".env"
+
+# ``SOURCE_DIR`` (documents, lecture seule) et ``BACKUP_DIR`` (zips temporaires) viennent de
+# ``config.local`` : ils sont définis plus bas, une fois le parseur ``KEY=valeur`` disponible.
 
 # Binaire CLI Proton Drive (non versionné, installé par ./install.sh) — cf. cdc.md §5.
 PROTON_DRIVE = PROJECT_DIR / "proton-drive"
@@ -61,7 +63,7 @@ LOG_KEEP = 7
 # Sauvegarde incrémentale — cf. cdc.md §6.
 STATE_FILE = PROJECT_DIR / ".databackup-state.json"  # historique (non versionné)
 STATE_VERSION = 1
-MANIFEST_NAME = ".databackup-manifest.json"  # manifeste du run, temporaire, dans backup/
+MANIFEST_NAME = ".databackup-manifest.json"  # manifeste du run, temporaire, dans BACKUP_DIR
 STATUS_NEW = "nouveau"
 STATUS_MODIFIED = "modifie"
 STATUS_UNCHANGED = "inchange"
@@ -78,14 +80,14 @@ STORED_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".mp4", ".stl", 
 # Commande appliquée quand aucune n'est fournie — cf. cdc.md §8.
 DEFAULT_COMMAND = "all"
 
-# Commandes dont le run se termine par un vidage de ``backup/`` — cf. cdc.md §6.
+# Commandes dont le run se termine par un vidage de ``BACKUP_DIR`` — cf. cdc.md §6.
 CLEANUP_COMMANDS = ("all", "cleanup")
 
 # Codes retour — contrat start.sh / Piloter (cf. cdc.md §8).
 EXIT_OK = 0
 EXIT_ERROR = 1  # échec générique (archivage ou transfert)
 EXIT_USAGE = 2  # argument invalide (aussi émis par argparse)
-EXIT_BACKUP = 3  # dossier backup/ indisponible (disque non monté)
+EXIT_BACKUP = 3  # dossier BACKUP_DIR indisponible (disque non monté)
 EXIT_AUTH = 4  # authentification Proton requise (utilisé en I4)
 EXIT_LOCKED = 5  # sauvegarde déjà en cours (verrou)
 
@@ -99,8 +101,12 @@ class Cancelled(Exception):
     """Annulation demandée par SIGTERM / SIGINT."""
 
 
+class ConfigurationError(RuntimeError):
+    """``config.local`` absent, incomplet ou invalide (cf. cdc.md §7)."""
+
+
 class BackupUnavailable(RuntimeError):
-    """Le dossier temporaire ``backup/`` est absent ou non inscriptible (code retour 3)."""
+    """Le dossier temporaire ``BACKUP_DIR`` est absent ou non inscriptible (code retour 3)."""
 
 
 class LockError(RuntimeError):
@@ -199,6 +205,59 @@ def load_env_file(path: Path) -> dict[str, str]:
     except FileNotFoundError:
         return {}
     return parse_dotenv(text)
+
+
+# --- Chemins de la machine (config.local) -----------------------------------
+
+
+def load_config(path: Path | None = None) -> dict[str, str]:
+    """Lit ``config.local`` (``KEY=valeur``, lignes ``#`` ignorées) — cf. cdc.md §7.
+
+    Fichier absent ou illisible ⇒ dictionnaire vide : c'est :func:`check_config` qui signale
+    précisément ce qui manque avant toute exécution.
+    """
+    path = path or CONFIG_FILE
+    if not path.is_file():
+        return {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    return parse_dotenv(text)
+
+
+def check_config(path: Path | None = None) -> None:
+    """Vérifie que ``config.local`` existe et déclare deux chemins absolus (cf. cdc.md §7).
+
+    Lève :class:`ConfigurationError` en nommant la réparation à appliquer.
+    """
+    path = path or CONFIG_FILE
+    values = load_config(path)
+    if not path.is_file():
+        raise ConfigurationError(
+            f"Configuration absente : {path}\n"
+            f"Crée {path.name} avec SOURCE_DIR et BACKUP_DIR (chemins absolus, cf. README.md)."
+        )
+    for key in ("SOURCE_DIR", "BACKUP_DIR"):
+        value = values.get(key)
+        if not value:
+            raise ConfigurationError(
+                f"Configuration incomplète : {key} manquant dans {path.name}.\n"
+                f"Renseigne {key} (chemin absolu), puis relance."
+            )
+        if not Path(value).is_absolute():
+            raise ConfigurationError(
+                f"Configuration invalide : {key} doit être un chemin absolu ({value}).\n"
+                f"Corrige {path.name}, puis relance."
+            )
+
+
+config = load_config()
+
+# Repli utilisé uniquement si le préflight est contourné (tests patchant les deux attributs) :
+# ``check_config`` refuse un ``config.local`` absent ou incomplet.
+SOURCE_DIR = Path(config.get("SOURCE_DIR") or PROJECT_DIR / "source")
+BACKUP_DIR = Path(config.get("BACKUP_DIR") or PROJECT_DIR / "backup")
 
 
 def resolve_password(env: Mapping[str, str] | None = None, env_file: Path | None = None) -> str | None:
@@ -300,20 +359,23 @@ def _raise_cancelled(_signum: int, _frame: object) -> None:
     raise Cancelled()
 
 
-# --- Dossier temporaire ``backup/`` -----------------------------------------
+# --- Dossier temporaire ``BACKUP_DIR`` -------------------------------------
 
 
 def require_backup_dir(path: Path | None = None) -> None:
-    """Vérifie que ``backup/`` existe et est inscriptible (cf. cdc.md §6, étape 1)."""
+    """Vérifie que ``BACKUP_DIR`` existe et est inscriptible (cf. cdc.md §6, étape 1)."""
     backup = path or BACKUP_DIR
     if not backup.exists():
-        raise BackupUnavailable(f"Dossier de backup introuvable : {backup} — le disque de backup est-il monté ?")
+        raise BackupUnavailable(
+            f"Dossier de backup introuvable : {backup} — disque monté et BACKUP_DIR correct dans "
+            f"{CONFIG_FILE.name} ?"
+        )
     if not os.access(backup, os.W_OK):
         raise BackupUnavailable(f"Dossier de backup non inscriptible : {backup}")
 
 
 def empty_backup(path: Path | None = None) -> int:
-    """Vide ``backup/``. Retourne le nombre d'éléments supprimés."""
+    """Vide ``BACKUP_DIR``. Retourne le nombre d'éléments supprimés."""
     backup = path or BACKUP_DIR
     removed = 0
     for entry in backup.iterdir():
@@ -326,12 +388,12 @@ def empty_backup(path: Path | None = None) -> int:
 
 
 def _final_cleanup() -> bool:
-    """Vide ``backup/`` en fin de run. Retourne ``False`` si le vidage est impossible."""
+    """Vide ``BACKUP_DIR`` en fin de run. Retourne ``False`` si le vidage est impossible."""
     try:
         require_backup_dir()
-        logger.info("Vidage de backup/ : %d élément(s) supprimé(s).", empty_backup())
+        logger.info("Vidage du dossier temporaire : %d élément(s) supprimé(s).", empty_backup())
     except (BackupUnavailable, OSError) as exc:
-        logger.error("Vidage de backup/ impossible : %s", exc)
+        logger.error("Vidage du dossier temporaire impossible : %s", exc)
         return False
     return True
 
@@ -467,7 +529,7 @@ def save_state(records: Mapping[str, ArchiveRecord], path: Path | None = None) -
 
 
 def manifest_path() -> Path:
-    """Manifeste du run en cours : signatures des archives présentes dans ``backup/``."""
+    """Manifeste du run en cours : signatures des archives présentes dans ``BACKUP_DIR``."""
     return BACKUP_DIR / MANIFEST_NAME
 
 
@@ -477,7 +539,7 @@ def load_manifest() -> dict[str, ArchiveRecord]:
 
 
 def save_manifest(records: Mapping[str, ArchiveRecord]) -> bool:
-    """Écrit le manifeste des archives créées dans ``backup/`` (fichier temporaire)."""
+    """Écrit le manifeste des archives créées dans ``BACKUP_DIR`` (fichier temporaire)."""
     return save_records(manifest_path(), records)
 
 
@@ -601,7 +663,9 @@ def plan_archives(
     """
     source = source_dir or SOURCE_DIR
     if not source.is_dir():
-        raise ScanError(f"Dossier source introuvable : {source} — le symlink source/ est-il en place ?")
+        raise ScanError(
+            f"Dossier source introuvable : {source} — vérifie SOURCE_DIR dans {CONFIG_FILE.name}."
+        )
 
     known = load_state() if state is None else state
 
@@ -878,7 +942,7 @@ def step_scan(
 def step_archive(
     *, limit: int | None = None, dry_run: bool = False, full: bool = False, stats: RunStats | None = None
 ) -> int:
-    """Étape ``archive`` : crée les zips chiffrés dans ``backup/`` (cf. cdc.md §4).
+    """Étape ``archive`` : crée les zips chiffrés dans ``BACKUP_DIR`` (cf. cdc.md §4).
 
     Seules les archives **nouvelles ou modifiées** sont créées (cf. cdc.md §6) ; les signatures
     de celles réellement écrites partent dans le **manifeste** du run, que ``transfer`` lira
@@ -1033,7 +1097,7 @@ def _record_backups(sent: list[Path]) -> None:
 
     Les signatures viennent du **manifeste** écrit par ``archive`` : c'est l'état de la source au
     moment de l'archivage, donc le contenu réellement présent sur Proton — et non l'état de
-    ``source/`` au moment du transfert (kDrive peut avoir bougé entre-temps). Sans manifeste,
+    ``SOURCE_DIR`` au moment du transfert (kDrive peut avoir bougé entre-temps). Sans manifeste,
     rien n'est inscrit : le défaut reste sûr, la prochaine exécution refera tout.
     """
     if not sent:
@@ -1063,7 +1127,7 @@ def _record_backups(sent: list[Path]) -> None:
 def execute(command: str, *, limit: int | None, dry_run: bool, full: bool, stats: RunStats) -> int:
     """Exécute la commande demandée et retourne un code retour.
 
-    ``all`` et ``archive`` vident ``backup/`` au début (cf. cdc.md §6, étape 2). Le vidage
+    ``all`` et ``archive`` vident ``BACKUP_DIR`` au début (cf. cdc.md §6, étape 2). Le vidage
     final (``all``, ``cleanup``) est garanti par :func:`main` dans son ``finally``, y compris
     en cas d'annulation. ``stats`` est alimenté pour le récapitulatif final. ``full`` ignore
     l'historique (tout est refait) — cf. cdc.md §6.
@@ -1082,7 +1146,7 @@ def execute(command: str, *, limit: int | None, dry_run: bool, full: bool, stats
 
     # archive / all — vidage initial avant tout traitement
     if not dry_run:
-        logger.info("Vidage initial de backup/ : %d élément(s) supprimé(s).", empty_backup())
+        logger.info("Vidage initial du dossier temporaire : %d élément(s) supprimé(s).", empty_backup())
 
     if command == "archive":
         return step_archive(limit=limit, dry_run=dry_run, full=full, stats=stats)
@@ -1126,17 +1190,17 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     commands = (
         ("scan", "Recenser ce qui serait sauvegardé (sans rien écrire)"),
-        ("archive", "Créer les archives chiffrées dans backup/"),
-        ("transfer", "Envoyer les archives de backup/ vers Proton Drive"),
-        ("cleanup", "Vider backup/"),
-        ("all", "scan + archive + transfer puis vidage de backup/ (défaut)"),
+        ("archive", "Créer les archives chiffrées dans le dossier temporaire"),
+        ("transfer", "Envoyer les archives du dossier temporaire vers Proton Drive"),
+        ("cleanup", "Vider le dossier temporaire"),
+        ("all", "scan + archive + transfer puis vidage du dossier temporaire (défaut)"),
     )
     for name, help_text in commands:
         subparser = subparsers.add_parser(name, help=help_text)
         subparser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Afficher le plan sans rien écrire dans backup/ ni rien envoyer.",
+            help="Afficher le plan sans rien écrire dans le dossier temporaire ni rien envoyer.",
         )
         if name in ("scan", "archive", "all"):
             subparser.add_argument(
@@ -1162,8 +1226,13 @@ def main(argv: list[str] | None = None) -> int:
     log_path = setup_logging()
     logger.info("=== DataBackup — %s ===", command)
     logger.info("Journal : %s", log_path)
+    try:
+        check_config()
+    except ConfigurationError as exc:
+        logger.error("%s", exc)
+        return EXIT_ERROR
     if args.dry_run:
-        logger.info("Mode --dry-run : rien ne sera écrit dans backup/, rien ne sera envoyé.")
+        logger.info("Mode --dry-run : rien ne sera écrit dans le dossier temporaire, rien ne sera envoyé.")
     if args.limit is not None:
         logger.info("Limite : %d dossier(s) de premier niveau.", args.limit)
     if args.full:
